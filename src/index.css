@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Override the default root constraints from Vite template */
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  text-align: left;
+  border: none;
+}
