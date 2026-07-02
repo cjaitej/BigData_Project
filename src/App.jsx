@@ -47,6 +47,8 @@ export default function App() {
 
   setStart(format(newStart, "yyyy-MM-dd"))
   setEnd(format(newEnd, "yyyy-MM-dd"))
+  setDraftStart(format(newStart, "yyyy-MM-dd"))
+  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
 }
 
 const zoomOut = () => {
@@ -73,6 +75,8 @@ const zoomOut = () => {
 
   setStart(format(newStart, "yyyy-MM-dd"))
   setEnd(format(newEnd, "yyyy-MM-dd"))
+  setDraftStart(format(newStart, "yyyy-MM-dd"))
+  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
 }
 
 const panLeft = () => {
@@ -94,6 +98,8 @@ const panLeft = () => {
 
   setStart(format(newStart, "yyyy-MM-dd"))
   setEnd(format(newEnd, "yyyy-MM-dd"))
+  setDraftStart(format(newStart, "yyyy-MM-dd"))
+  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
 }
 
 const panRight = () => {
@@ -115,6 +121,8 @@ const panRight = () => {
 
   setStart(format(newStart, "yyyy-MM-dd"))
   setEnd(format(newEnd, "yyyy-MM-dd"))
+  setDraftStart(format(newStart, "yyyy-MM-dd"))
+  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
 }
 
   const fetchData = useCallback(() => {
