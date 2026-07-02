@@ -12,9 +12,10 @@ const MARGIN  = { top: 8, right: 20, bottom: 36, left: 82 }
 const PANEL_H = 90
 const PANEL_GAP = 5
 
-export default function V1({ data }) {
+export default function V1({ data,     setDraftStart,   setDraftEnd }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
+  
 
   useEffect(() => {
     if (!data?.length || !svgRef.current || !wrapRef.current) return
@@ -31,6 +32,10 @@ export default function V1({ data }) {
     const parsed = data
       .filter(d => d.datetime)
       .map(d => ({ ...d, t: new Date(d.datetime) }))
+
+    const bisectDate = d3.bisector(d => d.t).center
+
+    const panelInfo = []
 
     const xScale = d3.scaleTime()
       .domain(d3.extent(parsed, d => d.t))
@@ -94,11 +99,25 @@ export default function V1({ data }) {
         .y(d => yScale(d[panel.key]))
         .curve(d3.curveLinear)
 
-      g.append('path').datum(parsed)
+      const path = g.append('path')
+        .datum(parsed)
         .attr('fill', 'none')
         .attr('stroke', panel.color)
         .attr('stroke-width', 1.2)
         .attr('d', line)
+
+      const hoverCircle = g.append('circle')
+        .attr('r', 5)
+        .attr('fill', panel.color)
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 1.5)
+        .style('display', 'none')
+
+      panelInfo.push({
+        panel,
+        yScale,
+        hoverCircle
+      })
 
       // Y axis ticks
       g.append('g')
@@ -136,6 +155,245 @@ export default function V1({ data }) {
       lg.append('text').attr('x', 14).attr('y', 9).attr('fill', '#f87171').attr('font-size', 9)
         .text('Storm period (Dst < −50 nT)')
     }
+    //--------------------------------------------------
+    // Hover Layer
+    //--------------------------------------------------
+
+    //--------------------------------------------------
+    // Selection
+    //--------------------------------------------------
+
+    let selecting = false
+    let startX = 0
+
+    const selectionRect = svg.append("rect")
+        .attr("display", "none")
+        .attr("fill", "rgba(99,102,241,0.18)")
+        .attr("stroke", "#6366f1")
+        .attr("stroke-width", 2)
+
+    const hoverLine = svg.append('line')
+      .attr('y1', MARGIN.top)
+      .attr('y2', xAxisY)
+      .attr('stroke', '#94a3b8')
+      .attr('stroke-width', 1)
+      .attr('stroke-dasharray', '4,3')
+      .style('display', 'none')
+
+    const tooltip = d3.select(wrapRef.current)
+      .append('div')
+      .style('position', 'absolute')
+      .style('pointer-events', 'none')
+      .style('background', '#0f172a')
+      .style('border', '1px solid #334155')
+      .style('border-radius', '6px')
+      .style('padding', '8px')
+      .style('font-size', '11px')
+      .style('color', '#e2e8f0')
+      .style('opacity', 0)
+
+      svg.append("rect")
+      .attr("x", MARGIN.left)
+      .attr("y", MARGIN.top)
+      .attr("width", W)
+      .attr("height", xAxisY - MARGIN.top)
+      .attr("fill", "transparent")
+      .style("cursor", "crosshair")
+      
+      .on("mousedown", function(event){
+
+      selecting = true
+
+      startX = d3.pointer(event, this)[0]
+
+      selectionRect
+
+          .attr("display", null)
+
+          .attr("x", startX)
+
+          .attr("y", MARGIN.top)
+
+          .attr("width", 0)
+
+          .attr("height", xAxisY - MARGIN.top)
+
+  })
+
+      .on("mousemove", function(event){
+
+        const [mx] = d3.pointer(event, this)
+
+        if(selecting){
+
+            selectionRect
+
+                .attr("x", Math.min(startX, mx))
+
+                .attr("width", Math.abs(mx - startX))
+
+            return
+        }
+
+
+        const x = mx - MARGIN.left
+
+        const date = xScale.invert(x)
+
+        const idx = bisectDate(parsed, date)
+
+        const d = parsed[idx]
+
+        if (!d) return
+
+        const cx = MARGIN.left + xScale(d.t)
+
+        hoverLine
+          .style("display", null)
+          .attr("x1", cx)
+          .attr("x2", cx)
+
+        panelInfo.forEach(p => {
+
+          const value = d[p.panel.key]
+
+          if (value == null) {
+            p.hoverCircle.style("display", "none")
+            return
+          }
+
+          p.hoverCircle
+            .style("display", null)
+            .attr("cx", xScale(d.t))
+            .attr("cy", p.yScale(value))
+
+        })
+
+        tooltip
+        .style("opacity", 1)
+        .style("left", `${event.offsetX + 20}px`)
+        .style("top", `${event.offsetY - 20}px`)
+        .html(`
+          <div style="font-weight:600;margin-bottom:6px;">
+            ${d.t.toLocaleString()}
+          </div>
+
+          <hr style="border-color:#334155;margin:4px 0"/>
+
+          <b>Solar Wind</b><br/>
+          Speed : ${d.flow_speed_kms?.toFixed(1) ?? "--"} km/s<br/>
+          Density : ${d.proton_density_ncc?.toFixed(2) ?? "--"} n/cc<br/>
+          Pressure : ${d.pdyn_computed_nPa?.toFixed(2) ?? "--"} nPa<br/>
+
+          <br/>
+
+          <b>Magnetic Field</b><br/>
+          Bz : ${d.bz_gsm_nT?.toFixed(2) ?? "--"} nT<br/>
+
+          <br/>
+
+          <b>Geomagnetic</b><br/>
+          Kp : ${d.kp ?? "--"}<br/>
+          Dst : ${d.dst_omni ?? "--"} nT<br/>
+
+          <br/>
+
+          <b>Storm</b> :
+          ${d.storm_flag ? "🔴 Yes" : "🟢 No"}
+
+        `)
+
+      })
+
+      .on("mouseout", () => {
+
+        hoverLine.style("display", "none")
+
+        panelInfo.forEach(p => {
+
+            p.hoverCircle.style("display", "none")
+
+        })
+
+        tooltip.style("opacity", 0)
+
+    })
+
+    d3.select(window)
+
+    .on("mouseup.v1", ()=>{
+
+        if(!selecting) return
+
+        selecting = false
+
+        const x = +selectionRect.attr("x")
+        const w = +selectionRect.attr("width")
+
+        if(w > 5){
+
+            const startDate = xScale.invert(x - MARGIN.left)
+            const endDate = xScale.invert(x + w - MARGIN.left)
+
+            setDraftStart(
+                d3.timeFormat("%Y-%m-%d")(startDate)
+            )
+
+            setDraftEnd(
+                d3.timeFormat("%Y-%m-%d")(endDate)
+            )
+
+        }
+
+        selectionRect.attr("display","none")
+
+    })
+    //--------------------------------------------------
+    // Brush
+    //--------------------------------------------------
+
+    // const brush = d3.brushX()
+
+    //   .extent([
+    //       [MARGIN.left, MARGIN.top],
+    //       [MARGIN.left + W, xAxisY]
+    //   ])
+
+    //   .on("end", (event) => {
+
+    //       if (!event.selection) return
+
+    //       const [x0, x1] = event.selection
+
+    //       const startDate = xScale.invert(x0 - MARGIN.left)
+    //       const endDate   = xScale.invert(x1 - MARGIN.left)
+
+    //       setDraftStart(
+    //           d3.timeFormat("%Y-%m-%d")(startDate)
+    //       )
+
+    //       setDraftEnd(
+    //           d3.timeFormat("%Y-%m-%d")(endDate)
+    //       )
+
+    //       brushGroup.call(brush.move, null)
+
+    //   })
+
+    // const brushGroup = svg.append("g")
+
+    //     .attr("class","brush")
+
+    //     .call(brush)
+    
+    return ()=>{
+
+    d3.select(window)
+
+        .on("mouseup.v1", null)
+
+}
+
   }, [data])
 
   return (
