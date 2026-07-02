@@ -131,7 +131,7 @@ const panRight = () => {
   return (
     <div className="min-h-screen bg-[#030712] text-slate-300 font-sans">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-sm px-6 py-4">
+      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-6 py-4">
         <div className="max-w-screen-2xl mx-auto">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
