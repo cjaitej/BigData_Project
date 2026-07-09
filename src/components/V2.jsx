@@ -8,10 +8,11 @@ const MARGIN = {
   left: 65,
 }
 
-export default function V2({ data }) {
+export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
+  const stateRef = useRef(null)   // scales + hover elements for the linked-view effects
 
   useEffect(() => {
 
@@ -69,6 +70,24 @@ export default function V2({ data }) {
     const pointsGroup = plot.append("g")
     .attr("clip-path","url(#scatterClip)")
 
+    // Ring highlighting the point at the shared hover time (above the points)
+    const ringGroup = plot.append("g")
+    .attr("clip-path","url(#scatterClip)")
+
+    const ring = ringGroup.append("circle")
+
+        .attr("r", 8)
+
+        .attr("fill", "none")
+
+        .attr("stroke", "#f8fafc")
+
+        .attr("stroke-width", 2)
+
+        .style("display", "none")
+
+        .style("pointer-events", "none")
+
     //--------------------------------------------------
     // Data
     //--------------------------------------------------
@@ -78,7 +97,7 @@ export default function V2({ data }) {
       d.flow_speed_kms != null &&
       d.proton_density_ncc != null
 
-    )
+    ).map(d => ({ ...d, t: new Date(d.datetime) }))
 
     //--------------------------------------------------
     // Scales
@@ -295,6 +314,8 @@ pointsGroup
 
 .on("mouseover", function(event,d){
 
+    setHoverTime(d.t)
+
     d3.select(this)
 
         .transition()
@@ -348,6 +369,8 @@ Kp : ${d.kp}
 })
 
 .on("mouseout", function(){
+
+    setHoverTime(null)
 
     d3.select(this)
 
@@ -478,13 +501,106 @@ Kp : ${d.kp}
         .attr("cy",d=>zy(d.proton_density_ncc))
     // pointsGroup.raise();
 
+    // Keep the linked-hover ring glued to its point while zooming
+    const s = stateRef.current
+
+    if (s) {
+
+        s.zx = zx
+        s.zy = zy
+
+        if (s.lastPoint) {
+
+            ring
+                .attr("cx", zx(s.lastPoint.flow_speed_kms))
+                .attr("cy", zy(s.lastPoint.proton_density_ncc))
+
+        }
+
+    }
+
 })
 
   svg.call(zoom)
 
+  stateRef.current = {
 
+      parsed,
 
-  }, [data])
+      zx: x,
+
+      zy: y,
+
+      ring,
+
+      pointsGroup,
+
+      bisect: d3.bisector(d => d.t).center,
+
+      lastPoint: null,
+
+  }
+
+  }, [data, setHoverTime])
+
+  //--------------------------------------------------
+  // Linked hover — ring the point nearest the
+  // shared hover time (set here, in V1 or in V3)
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const s = stateRef.current
+    if (!s) return
+
+    if (!hoverTime || !s.parsed.length) {
+
+        s.lastPoint = null
+
+        s.ring.style("display", "none")
+
+        return
+    }
+
+    const p = s.parsed[s.bisect(s.parsed, hoverTime)]
+    if (!p) return
+
+    s.lastPoint = p
+
+    s.ring
+
+        .style("display", null)
+
+        .attr("cx", s.zx(p.flow_speed_kms))
+
+        .attr("cy", s.zy(p.proton_density_ncc))
+
+  }, [hoverTime, data])
+
+  //--------------------------------------------------
+  // Linked selection — dim points outside the
+  // range brushed in V1
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const s = stateRef.current
+    if (!s) return
+
+    if (!selection) {
+
+        s.pointsGroup.selectAll("circle").attr("opacity", 0.8)
+
+        return
+    }
+
+    const [t0, t1] = selection
+
+    s.pointsGroup.selectAll("circle")
+
+        .attr("opacity", d => (d.t >= t0 && d.t <= t1) ? 0.9 : 0.05)
+
+  }, [selection, data])
 
   return (
 
@@ -506,7 +622,7 @@ Kp : ${d.kp}
 
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
 
-          Solar Wind Speed vs Proton Density
+          Speed vs density · colored by Bz · scroll to zoom · hover syncs all panels
 
         </span>
 

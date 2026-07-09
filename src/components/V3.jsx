@@ -42,10 +42,11 @@ const ROW_H  = 52
 const MARGIN = { top: 8, right: 28, bottom: 36, left: 90 }
 const TOTAL_H = MARGIN.top + ROWS.length * ROW_H + MARGIN.bottom  // 252px
 
-export default function V3({ data }) {
+export default function V3({ data, hoverTime, setHoverTime, selection }) {
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
   const svgRef       = useRef(null)
+  const chartRef     = useRef(null)   // scales + hover elements for the linked-view effects
 
   useEffect(() => {
     if (!data?.length || !containerRef.current) return
@@ -170,7 +171,154 @@ export default function V3({ data }) {
           .attr('fill', row.colorFn(val, ext))
       }
     })
-  }, [data])
+
+    //--------------------------------------------------
+    // Hover + linked-view layer
+    //--------------------------------------------------
+
+    const bisect = d3.bisector(d => d.t).center
+
+    // Persistent band showing the shared selection (drawn by the selection effect)
+    const persistBand = svg.append('rect')
+      .attr('y', MARGIN.top)
+      .attr('height', chartH)
+      .attr('fill', 'rgba(99,102,241,0.10)')
+      .attr('stroke', '#6366f1')
+      .attr('stroke-dasharray', '3,3')
+      .style('display', 'none')
+
+    // Cursor line driven by shared hoverTime
+    const hoverLine = svg.append('line')
+      .attr('y1', MARGIN.top)
+      .attr('y2', MARGIN.top + chartH)
+      .attr('stroke', '#e2e8f0')
+      .attr('stroke-width', 1)
+      .attr('stroke-dasharray', '4,3')
+      .style('display', 'none')
+
+    // Tooltip (recreate on each draw)
+    d3.select(containerRef.current).selectAll('div.v3-tooltip').remove()
+    const tooltip = d3.select(containerRef.current)
+      .append('div')
+      .attr('class', 'v3-tooltip')
+      .style('position', 'absolute')
+      .style('pointer-events', 'none')
+      .style('background', '#0f172a')
+      .style('border', '1px solid #334155')
+      .style('border-radius', '6px')
+      .style('padding', '8px')
+      .style('font-size', '11px')
+      .style('color', '#e2e8f0')
+      .style('z-index', 10)
+      .style('opacity', 0)
+
+    // Invisible hit area — overrides the svg's pointer-events:none
+    svg.append('rect')
+      .attr('x', MARGIN.left)
+      .attr('y', MARGIN.top)
+      .attr('width', chartW)
+      .attr('height', chartH)
+      .attr('fill', 'transparent')
+      .style('pointer-events', 'all')
+      .style('cursor', 'crosshair')
+
+      .on('mousemove', function (event) {
+
+        const [mx] = d3.pointer(event, this)
+
+        const date = xScale.invert(mx - MARGIN.left)
+        const d = parsed[bisect(parsed, date)]
+        if (!d) return
+
+        setHoverTime(d.t)
+
+        tooltip
+          .style('opacity', 1)
+          .style('left', `${event.offsetX + 18}px`)
+          .style('top', `${event.offsetY - 12}px`)
+          .html(`
+            <div style="font-weight:600;margin-bottom:6px;">
+              ${d.t.toLocaleString()}
+            </div>
+            <hr style="border-color:#334155;margin:4px 0"/>
+            IMF Bz : ${d.bz_gsm_nT?.toFixed(2) ?? '--'} nT<br/>
+            SW Speed : ${d.flow_speed_kms?.toFixed(1) ?? '--'} km/s<br/>
+            Density : ${d.proton_density_ncc?.toFixed(2) ?? '--'} n/cc<br/>
+            Kp : ${d.kp ?? '--'}<br/>
+            <br/>
+            <b>Storm</b> : ${d.storm_flag ? '🔴 Yes' : '🟢 No'}
+          `)
+      })
+
+      .on('mouseout', () => {
+        setHoverTime(null)
+        tooltip.style('opacity', 0)
+      })
+
+    chartRef.current = { xScale, parsed, bisect, hoverLine, persistBand }
+
+  }, [data, setHoverTime])
+
+  //--------------------------------------------------
+  // Linked hover — cursor driven by shared hoverTime
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const c = chartRef.current
+    if (!c) return
+
+    const { xScale, parsed, bisect, hoverLine } = c
+
+    // note: never return the d3 selection from the effect — React would
+    // treat it as a cleanup function and crash
+    const hide = () => { hoverLine.style('display', 'none') }
+
+    if (!hoverTime || !parsed.length) return hide()
+
+    const [d0, d1] = xScale.domain()
+    if (hoverTime < d0 || hoverTime > d1) return hide()
+
+    const d = parsed[bisect(parsed, hoverTime)]
+    if (!d) return hide()
+
+    const cx = MARGIN.left + xScale(d.t)
+    hoverLine.style('display', null).attr('x1', cx).attr('x2', cx)
+
+  }, [hoverTime, data])
+
+  //--------------------------------------------------
+  // Linked selection — persistent band for the
+  // shared brushed range
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const c = chartRef.current
+    if (!c) return
+
+    const { xScale, persistBand } = c
+
+    if (!selection) {
+      persistBand.style('display', 'none')
+      return
+    }
+
+    const [d0, d1] = xScale.domain()
+    const s = Math.max(selection[0], d0)
+    const e = Math.min(selection[1], d1)
+
+    if (e <= s) {
+      persistBand.style('display', 'none')
+      return
+    }
+
+    persistBand
+      .style('display', null)
+      .attr('x', MARGIN.left + xScale(s))
+      .attr('width', xScale(e) - xScale(s))
+
+  }, [selection, data])
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -179,7 +327,7 @@ export default function V3({ data }) {
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V3</span>
         <span className="text-sm font-semibold text-slate-200">Event Spectrogram</span>
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          Color-encoded parameter heatmap · red outlines = storm periods
+          Color-encoded parameter heatmap · red outlines = storm periods · hover syncs all panels
         </span>
       </div>
 

@@ -12,10 +12,11 @@ const MARGIN  = { top: 8, right: 20, bottom: 36, left: 82 }
 const PANEL_H = 90
 const PANEL_GAP = 5
 
-export default function V1({ data,     setDraftStart,   setDraftEnd }) {
+export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHoverTime, selection, setSelection }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
-  
+  const chartRef = useRef(null)   // scales + hover elements for the linked-view effects
+
 
   useEffect(() => {
     if (!data?.length || !svgRef.current || !wrapRef.current) return
@@ -99,7 +100,7 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
         .y(d => yScale(d[panel.key]))
         .curve(d3.curveLinear)
 
-      const path = g.append('path')
+      g.append('path')
         .datum(parsed)
         .attr('fill', 'none')
         .attr('stroke', panel.color)
@@ -192,6 +193,15 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
       .style('color', '#e2e8f0')
       .style('opacity', 0)
 
+    // Persistent band showing the shared selection (drawn by the selection effect)
+    const persistBand = svg.append("rect")
+        .attr("y", MARGIN.top)
+        .attr("height", xAxisY - MARGIN.top)
+        .attr("fill", "rgba(99,102,241,0.10)")
+        .attr("stroke", "#6366f1")
+        .attr("stroke-dasharray", "3,3")
+        .style("display", "none")
+
       svg.append("rect")
       .attr("x", MARGIN.left)
       .attr("y", MARGIN.top)
@@ -246,28 +256,8 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
 
         if (!d) return
 
-        const cx = MARGIN.left + xScale(d.t)
-
-        hoverLine
-          .style("display", null)
-          .attr("x1", cx)
-          .attr("x2", cx)
-
-        panelInfo.forEach(p => {
-
-          const value = d[p.panel.key]
-
-          if (value == null) {
-            p.hoverCircle.style("display", "none")
-            return
-          }
-
-          p.hoverCircle
-            .style("display", null)
-            .attr("cx", xScale(d.t))
-            .attr("cy", p.yScale(value))
-
-        })
+        // cursor line + circles are drawn by the shared hoverTime effect below
+        setHoverTime(d.t)
 
         tooltip
         .style("opacity", 1)
@@ -307,15 +297,15 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
 
       .on("mouseout", () => {
 
-        hoverLine.style("display", "none")
-
-        panelInfo.forEach(p => {
-
-            p.hoverCircle.style("display", "none")
-
-        })
+        setHoverTime(null)
 
         tooltip.style("opacity", 0)
+
+    })
+
+      .on("dblclick", () => {
+
+        setSelection(null)
 
     })
 
@@ -342,6 +332,8 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
             setDraftEnd(
                 d3.timeFormat("%Y-%m-%d")(endDate)
             )
+
+            setSelection([startDate, endDate])
 
         }
 
@@ -385,7 +377,9 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
     //     .attr("class","brush")
 
     //     .call(brush)
-    
+
+    chartRef.current = { xScale, parsed, bisectDate, panelInfo, hoverLine, persistBand }
+
     return ()=>{
 
     d3.select(window)
@@ -394,7 +388,92 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
 
 }
 
-  }, [data])
+  }, [data, setDraftStart, setDraftEnd, setHoverTime, setSelection])
+
+  //--------------------------------------------------
+  // Linked hover — cursor driven by shared hoverTime
+  // (set here, in V2 or in V3)
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const c = chartRef.current
+    if (!c) return
+
+    const { xScale, parsed, bisectDate, panelInfo, hoverLine } = c
+
+    const hide = () => {
+      hoverLine.style("display", "none")
+      panelInfo.forEach(p => p.hoverCircle.style("display", "none"))
+    }
+
+    if (!hoverTime || !parsed.length) return hide()
+
+    const [d0, d1] = xScale.domain()
+    if (hoverTime < d0 || hoverTime > d1) return hide()
+
+    const d = parsed[bisectDate(parsed, hoverTime)]
+    if (!d) return hide()
+
+    const cx = MARGIN.left + xScale(d.t)
+
+    hoverLine
+      .style("display", null)
+      .attr("x1", cx)
+      .attr("x2", cx)
+
+    panelInfo.forEach(p => {
+
+      const value = d[p.panel.key]
+
+      if (value == null) {
+        p.hoverCircle.style("display", "none")
+        return
+      }
+
+      p.hoverCircle
+        .style("display", null)
+        .attr("cx", xScale(d.t))
+        .attr("cy", p.yScale(value))
+
+    })
+
+  }, [hoverTime, data])
+
+  //--------------------------------------------------
+  // Linked selection — persistent band for the
+  // shared brushed range
+  //--------------------------------------------------
+
+  useEffect(() => {
+
+    const c = chartRef.current
+    if (!c) return
+
+    const { xScale, persistBand } = c
+
+    // note: never return the d3 selection from the effect — React would
+    // treat it as a cleanup function and crash
+    if (!selection) {
+      persistBand.style("display", "none")
+      return
+    }
+
+    const [d0, d1] = xScale.domain()
+    const s = Math.max(selection[0], d0)
+    const e = Math.min(selection[1], d1)
+
+    if (e <= s) {
+      persistBand.style("display", "none")
+      return
+    }
+
+    persistBand
+      .style("display", null)
+      .attr("x", MARGIN.left + xScale(s))
+      .attr("width", xScale(e) - xScale(s))
+
+  }, [selection, data])
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -403,7 +482,7 @@ export default function V1({ data,     setDraftStart,   setDraftEnd }) {
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V1</span>
         <span className="text-sm font-semibold text-slate-200">Time-Series Overview</span>
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          Solar wind speed · density · IMF Bz · dynamic pressure
+          Drag to select a range · double-click to clear · hover syncs all panels
         </span>
       </div>
 

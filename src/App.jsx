@@ -29,6 +29,20 @@ export default function App() {
   const [draftStart, setDraftStart] = useState(DEFAULT_START)
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
+  // Linked-view state shared by V1 / V2 / V3
+  const [hoverTime, setHoverTime] = useState(null)   // Date | null — synced cursor
+  const [selection, setSelection] = useState(null)   // [Date, Date] | null — brushed range
+
+  // Every range change goes through here so the linked cursor/brush reset too
+  const applyRange = (newStart, newEnd) => {
+    setStart(newStart)
+    setEnd(newEnd)
+    setDraftStart(newStart)
+    setDraftEnd(newEnd)
+    setHoverTime(null)
+    setSelection(null)
+  }
+
   const zoomIn = () => {
 
   const s = parseISO(start)
@@ -45,10 +59,7 @@ export default function App() {
   const newStart = subDays(center, Math.floor(newDays / 2))
   const newEnd = addDays(center, Math.ceil(newDays / 2))
 
-  setStart(format(newStart, "yyyy-MM-dd"))
-  setEnd(format(newEnd, "yyyy-MM-dd"))
-  setDraftStart(format(newStart, "yyyy-MM-dd"))
-  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
+  applyRange(format(newStart, "yyyy-MM-dd"), format(newEnd, "yyyy-MM-dd"))
 }
 
 const zoomOut = () => {
@@ -73,10 +84,7 @@ const zoomOut = () => {
   if (newEnd > DATASET_END)
       newEnd = DATASET_END
 
-  setStart(format(newStart, "yyyy-MM-dd"))
-  setEnd(format(newEnd, "yyyy-MM-dd"))
-  setDraftStart(format(newStart, "yyyy-MM-dd"))
-  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
+  applyRange(format(newStart, "yyyy-MM-dd"), format(newEnd, "yyyy-MM-dd"))
 }
 
 const panLeft = () => {
@@ -96,10 +104,7 @@ const panLeft = () => {
 
   }
 
-  setStart(format(newStart, "yyyy-MM-dd"))
-  setEnd(format(newEnd, "yyyy-MM-dd"))
-  setDraftStart(format(newStart, "yyyy-MM-dd"))
-  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
+  applyRange(format(newStart, "yyyy-MM-dd"), format(newEnd, "yyyy-MM-dd"))
 }
 
 const panRight = () => {
@@ -119,10 +124,7 @@ const panRight = () => {
 
   }
 
-  setStart(format(newStart, "yyyy-MM-dd"))
-  setEnd(format(newEnd, "yyyy-MM-dd"))
-  setDraftStart(format(newStart, "yyyy-MM-dd"))
-  setDraftEnd(format(newEnd, "yyyy-MM-dd"))
+  applyRange(format(newStart, "yyyy-MM-dd"), format(newEnd, "yyyy-MM-dd"))
 }
 
   const fetchData = useCallback(() => {
@@ -175,12 +177,7 @@ const panRight = () => {
                 />
               </label>
               <button
-                  onClick={() => {
-
-                      setStart(draftStart)
-                      setEnd(draftEnd)
-
-                  }}
+                  onClick={() => applyRange(draftStart, draftEnd)}
                 disabled={loading}
                 className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
               >
@@ -228,7 +225,7 @@ const panRight = () => {
                 ].map(p => (
                   <button
                     key={p.label}
-                    onClick={() => { setStart(p.start); setEnd(p.end) }}
+                    onClick={() => applyRange(p.start, p.end)}
                     className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
                   >
                     {p.label}
@@ -269,10 +266,28 @@ const panRight = () => {
 
       {/* Panels */}
       <main className="max-w-screen-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-        <V1 data={data} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd}/>
-        <V3 data={data} />
+        <V1
+          data={data}
+          setDraftStart={setDraftStart}
+          setDraftEnd={setDraftEnd}
+          hoverTime={hoverTime}
+          setHoverTime={setHoverTime}
+          selection={selection}
+          setSelection={setSelection}
+        />
+        <V3
+          data={data}
+          hoverTime={hoverTime}
+          setHoverTime={setHoverTime}
+          selection={selection}
+        />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <V2 data = {data}/>
+          <V2
+            data={data}
+            hoverTime={hoverTime}
+            setHoverTime={setHoverTime}
+            selection={selection}
+          />
           <V4 />
         </div>
         <V5 />
