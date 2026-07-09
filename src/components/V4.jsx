@@ -1,15 +1,15 @@
 export default function V4() {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
+    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V4</span>
         <span className="text-sm font-semibold text-slate-200">Storm Event Inspector</span>
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          72-hour detail · shock arrival · Dst collapse · overlay comparison
+          72-hour detail · coming soon
         </span>
       </div>
 
-      <div className="relative flex flex-col items-center justify-center h-52 gap-3 overflow-hidden">
+      <div className="relative flex flex-col items-center justify-center flex-1 min-h-0 gap-3 overflow-hidden">
         {/* Decorative waveform lines */}
         <svg className="absolute inset-0 w-full h-full opacity-20" aria-hidden="true">
           {[

@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
 const PANELS = [
@@ -9,7 +9,6 @@ const PANELS = [
 ]
 
 const MARGIN  = { top: 8, right: 20, bottom: 36, left: 82 }
-const PANEL_H = 90
 const PANEL_GAP = 5
 
 export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHoverTime, selection, setSelection }) {
@@ -17,13 +16,23 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
   const wrapRef = useRef(null)
   const chartRef = useRef(null)   // scales + hover elements for the linked-view effects
 
+  // Redraw when the grid cell resizes — chart height follows the container
+  const [sizeTick, setSizeTick] = useState(0)
+  useEffect(() => {
+    if (!wrapRef.current) return
+    const ro = new ResizeObserver(() => setSizeTick(t => t + 1))
+    ro.observe(wrapRef.current)
+    return () => ro.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!data?.length || !svgRef.current || !wrapRef.current) return
 
     const totalW = wrapRef.current.clientWidth
+    const availH = wrapRef.current.clientHeight || 419
     const W      = totalW - MARGIN.left - MARGIN.right
     const n      = PANELS.length
+    const PANEL_H = Math.max(30, (availH - MARGIN.top - MARGIN.bottom - (n - 1) * PANEL_GAP) / n)
     const totalH = MARGIN.top + n * PANEL_H + (n - 1) * PANEL_GAP + MARGIN.bottom
 
     const svg = d3.select(svgRef.current)
@@ -388,7 +397,7 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
 
 }
 
-  }, [data, setDraftStart, setDraftEnd, setHoverTime, setSelection])
+  }, [data, sizeTick, setDraftStart, setDraftEnd, setHoverTime, setSelection])
 
   //--------------------------------------------------
   // Linked hover — cursor driven by shared hoverTime
@@ -476,20 +485,20 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
   }, [selection, data])
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       {/* Panel header */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V1</span>
         <span className="text-sm font-semibold text-slate-200">Time-Series Overview</span>
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          Drag to select a range · double-click to clear · hover syncs all panels
+          Drag selects · dbl-click clears · hover syncs
         </span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
-      <div ref={wrapRef} className="relative w-full py-1">
+      <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
-          ? <div className="flex items-center justify-center h-48 text-slate-500 text-sm">Waiting for data…</div>
+          ? <div className="flex items-center justify-center h-full text-slate-500 text-sm">Waiting for data…</div>
           : <svg ref={svgRef} style={{ display: 'block' }} />
         }
       </div>

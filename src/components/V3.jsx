@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
 const ROWS = [
@@ -38,9 +38,7 @@ const ROWS = [
   },
 ]
 
-const ROW_H  = 52
 const MARGIN = { top: 8, right: 28, bottom: 36, left: 90 }
-const TOTAL_H = MARGIN.top + ROWS.length * ROW_H + MARGIN.bottom  // 252px
 
 export default function V3({ data, hoverTime, setHoverTime, selection }) {
   const containerRef = useRef(null)
@@ -48,10 +46,21 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
   const svgRef       = useRef(null)
   const chartRef     = useRef(null)   // scales + hover elements for the linked-view effects
 
+  // Redraw when the grid cell resizes — row height follows the container
+  const [sizeTick, setSizeTick] = useState(0)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const ro = new ResizeObserver(() => setSizeTick(t => t + 1))
+    ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [])
+
   useEffect(() => {
     if (!data?.length || !containerRef.current) return
 
     const totalW  = containerRef.current.clientWidth
+    const availH  = containerRef.current.clientHeight || 252
+    const ROW_H   = Math.max(24, (availH - MARGIN.top - MARGIN.bottom) / ROWS.length)
     const chartW  = totalW - MARGIN.left - MARGIN.right
     const chartH  = ROWS.length * ROW_H
 
@@ -93,7 +102,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
     // --- SVG overlay: axes, labels, storm bands, colorbars ---
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
-    svg.attr('width', totalW).attr('height', TOTAL_H)
+    svg.attr('width', totalW).attr('height', availH)
 
     // Row labels + units
     ROWS.forEach((row, ri) => {
@@ -257,7 +266,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
 
     chartRef.current = { xScale, parsed, bisect, hoverLine, persistBand }
 
-  }, [data, setHoverTime])
+  }, [data, sizeTick, setHoverTime])
 
   //--------------------------------------------------
   // Linked hover — cursor driven by shared hoverTime
@@ -321,18 +330,18 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
   }, [selection, data])
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       {/* Panel header */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V3</span>
         <span className="text-sm font-semibold text-slate-200">Event Spectrogram</span>
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          Color-encoded parameter heatmap · red outlines = storm periods · hover syncs all panels
+          parameter heatmap · red outline = storm · hover syncs
         </span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
-      <div ref={containerRef} className="relative w-full" style={{ height: TOTAL_H }}>
+      <div ref={containerRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
           ? <div className="flex items-center justify-center h-full text-slate-500 text-sm">Waiting for data…</div>
           : <>

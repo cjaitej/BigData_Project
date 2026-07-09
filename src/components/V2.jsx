@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
 const MARGIN = {
@@ -14,12 +14,21 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
   const svgRef = useRef(null)
   const stateRef = useRef(null)   // scales + hover elements for the linked-view effects
 
+  // Redraw when the grid cell resizes — chart height follows the container
+  const [sizeTick, setSizeTick] = useState(0)
+  useEffect(() => {
+    if (!wrapRef.current) return
+    const ro = new ResizeObserver(() => setSizeTick(t => t + 1))
+    ro.observe(wrapRef.current)
+    return () => ro.disconnect()
+  }, [])
+
   useEffect(() => {
 
     if (!data?.length || !wrapRef.current) return
 
     const totalWidth = wrapRef.current.clientWidth
-    const totalHeight = 450
+    const totalHeight = wrapRef.current.clientHeight || 450
 
     const width =
       totalWidth - MARGIN.left - MARGIN.right
@@ -197,7 +206,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
       )
 
-      .call(d3.axisBottom(x))
+      .call(d3.axisBottom(x).ticks(6))
 
       .call(g =>
 
@@ -220,7 +229,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
     const yAxis = axisGroup
     .append("g")
 
-      .call(d3.axisLeft(y))
+      .call(d3.axisLeft(y).ticks(6))
 
       .call(g =>
 
@@ -488,9 +497,9 @@ Kp : ${d.kp}
 
     const zy = transform.rescaleY(y)
 
-    xAxis.call(d3.axisBottom(zx))
+    xAxis.call(d3.axisBottom(zx).ticks(6))
 
-    yAxis.call(d3.axisLeft(zy))
+    yAxis.call(d3.axisLeft(zy).ticks(6))
 
     pointsGroup
 
@@ -541,7 +550,7 @@ Kp : ${d.kp}
 
   }
 
-  }, [data, setHoverTime])
+  }, [data, sizeTick, setHoverTime])
 
   //--------------------------------------------------
   // Linked hover — ring the point nearest the
@@ -604,9 +613,9 @@ Kp : ${d.kp}
 
   return (
 
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
 
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
 
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">
 
@@ -622,7 +631,7 @@ Kp : ${d.kp}
 
         <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
 
-          Speed vs density · colored by Bz · scroll to zoom · hover syncs all panels
+          speed vs density · Bz color · zoom
 
         </span>
 
@@ -632,9 +641,7 @@ Kp : ${d.kp}
 
         ref={wrapRef}
 
-        className="relative w-full"
-
-        style={{ height: 450 }}
+        className="relative w-full flex-1 min-h-0 overflow-hidden"
 
       >
 

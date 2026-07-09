@@ -139,119 +139,89 @@ const panRight = () => {
   useEffect(() => { fetchData() }, [fetchData])
 
   return (
-    <div className="min-h-screen bg-[#030712] text-slate-300 font-sans">
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-6 py-4">
-        <div className="max-w-screen-2xl mx-auto">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <h1 className="text-xl font-bold text-slate-100 tracking-tight">
-                Solar Wind &amp; Space Weather Analytics
-              </h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                CS661 · Group 21 · NASA OMNI High-Resolution Database (1-min, time-shifted to bow shock)
-              </p>
-            </div>
-
-            {/* Date range controls */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <label className="flex items-center gap-1.5 text-xs text-slate-400">
-                Start
-                <input
-                  type="date"
-                  value={draftStart}
-                  min="1995-01-01"
-                  max={draftEnd}
-                  onChange={e => setDraftStart(e.target.value)}
-                  className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-                />
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-slate-400">
-                End
-                <input
-                      type="date"
-                      value={draftEnd}
-                      min={draftStart}
-                      onChange={e => setDraftEnd(e.target.value)}
-                  className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-                />
-              </label>
-              <button
-                  onClick={() => applyRange(draftStart, draftEnd)}
-                disabled={loading}
-                className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
-              >
-                {loading ? 'Loading…' : 'Apply'}
-              </button>
-
-              <div className="flex items-center gap-1 ml-2">
-
-              <button
-                onClick={panLeft}
-                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs"
-              >
-                ◀
-              </button>
-
-              <button
-                onClick={zoomOut}
-                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs"
-              >
-                −
-              </button>
-
-              <button
-                onClick={zoomIn}
-                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs"
-              >
-                +
-              </button>
-
-              <button
-                onClick={panRight}
-                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs"
-              >
-                ▶
-              </button>
-
-            </div>
-
-
-              {/* Quick presets */}
-              <div className="flex items-center gap-1 ml-1">
-                {[
-                  { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
-                  { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
-                ].map(p => (
-                  <button
-                    key={p.label}
-                    onClick={() => applyRange(p.start, p.end)}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+    <div className="h-screen overflow-hidden flex flex-col bg-[#030712] text-slate-300 font-sans">
+      {/* Compact single-row header — everything must fit on one screen */}
+      <header className="flex-none border-b border-slate-800 bg-slate-900/90 px-4 py-1.5">
+        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+          <div className="mr-1">
+            <h1 className="text-sm font-bold text-slate-100 tracking-tight leading-tight">
+              Solar Wind &amp; Space Weather Analytics
+            </h1>
+            <p className="text-[10px] text-slate-500 leading-tight">
+              CS661 · Group 21 · NASA OMNI (1-min, time-shifted to bow shock)
+            </p>
           </div>
 
-          {/* Status bar */}
-          <div className="flex items-center gap-3 mt-2">
+          {/* Date range controls */}
+          <label className="flex items-center gap-1.5 text-xs text-slate-400">
+            Start
+            <input
+              type="date"
+              value={draftStart}
+              min="1995-01-01"
+              max={draftEnd}
+              onChange={e => setDraftStart(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400">
+            End
+            <input
+              type="date"
+              value={draftEnd}
+              min={draftStart}
+              onChange={e => setDraftEnd(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </label>
+          <button
+            onClick={() => applyRange(draftStart, draftEnd)}
+            disabled={loading}
+            className="px-3 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
+          >
+            {loading ? 'Loading…' : 'Apply'}
+          </button>
+
+          <div className="flex items-center gap-1">
+            <button onClick={panLeft} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">◀</button>
+            <button onClick={zoomOut} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">−</button>
+            <button onClick={zoomIn} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">+</button>
+            <button onClick={panRight} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">▶</button>
+          </div>
+
+          {/* Quick presets */}
+          <div className="flex items-center gap-1">
+            {[
+              { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
+              { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
+            ].map(p => (
+              <button
+                key={p.label}
+                onClick={() => applyRange(p.start, p.end)}
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Status */}
+          <div className="ml-auto flex items-center gap-2">
             {loading && (
-              <div className="flex items-center gap-1.5 text-xs text-indigo-400">
+              <span className="flex items-center gap-1.5 text-xs text-indigo-400">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
                 Fetching…
-              </div>
+              </span>
             )}
             {error && (
-              <p className="text-xs text-red-400">
-                API error: {error} — is the Flask server running on port 5000?
-              </p>
+              <span className="text-xs text-red-400">
+                API error: {error} — is Flask running on port 5000?
+              </span>
             )}
             {!loading && !error && data.length > 0 && (
-              <p className="text-xs text-slate-500">
-                {data.length.toLocaleString()} hourly records · {start} → {end}
-              </p>
+              <span className="text-xs text-slate-500">
+                {data.length.toLocaleString()} records · {start} → {end}
+              </span>
             )}
           </div>
         </div>
@@ -259,38 +229,56 @@ const panRight = () => {
 
       {/* Loading progress bar */}
       {loading && (
-        <div className="h-0.5 bg-slate-800">
+        <div className="flex-none h-0.5 bg-slate-800">
           <div className="h-full bg-indigo-500 animate-pulse" style={{ width: '60%' }} />
         </div>
       )}
 
-      {/* Panels */}
-      <main className="max-w-screen-2xl mx-auto px-4 py-4 flex flex-col gap-4">
-        <V1
-          data={data}
-          setDraftStart={setDraftStart}
-          setDraftEnd={setDraftEnd}
-          hoverTime={hoverTime}
-          setHoverTime={setHoverTime}
-          selection={selection}
-          setSelection={setSelection}
-        />
-        <V3
-          data={data}
-          hoverTime={hoverTime}
-          setHoverTime={setHoverTime}
-          selection={selection}
-        />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Single-screen dashboard grid — V5 is the hub, everything links to it */}
+      <main
+        className="flex-1 min-h-0 grid grid-cols-12 gap-2 p-2"
+        style={{ gridTemplateRows: 'minmax(0, 11fr) minmax(0, 9fr)' }}
+      >
+        <div className="col-span-7 min-h-0">
+          <V5
+            start={start}
+            end={end}
+            hoverTime={hoverTime}
+            setHoverTime={setHoverTime}
+            selection={selection}
+            applyRange={applyRange}
+          />
+        </div>
+        <div className="col-span-5 min-h-0">
+          <V1
+            data={data}
+            setDraftStart={setDraftStart}
+            setDraftEnd={setDraftEnd}
+            hoverTime={hoverTime}
+            setHoverTime={setHoverTime}
+            selection={selection}
+            setSelection={setSelection}
+          />
+        </div>
+        <div className="col-span-3 min-h-0">
           <V2
             data={data}
             hoverTime={hoverTime}
             setHoverTime={setHoverTime}
             selection={selection}
           />
+        </div>
+        <div className="col-span-6 min-h-0">
+          <V3
+            data={data}
+            hoverTime={hoverTime}
+            setHoverTime={setHoverTime}
+            selection={selection}
+          />
+        </div>
+        <div className="col-span-3 min-h-0">
           <V4 />
         </div>
-        <V5 />
       </main>
     </div>
   )
