@@ -33,7 +33,7 @@ Open http://localhost:5173
 | V1 | Time-series overview (SW speed, density, IMF Bz, Pdyn) | Done |
 | V2 | Phase space scatter — velocity vs. density | Done |
 | V3 | Event spectrogram — parameter heatmap | Done |
-| V4 | Storm event inspector — 72h detail view | Pending |
+| V4 | Storm event inspector — 72h detail view | Done |
 | V5 | Orbital exposure simulator — Canvas magnetosphere | Pending |
 
 ---
