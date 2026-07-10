@@ -268,7 +268,7 @@ const panRight = () => {
             selection={selection}
           />
         </div>
-        <div className="col-span-6 min-h-0">
+        <div className="col-span-5 min-h-0">
           <V3
             data={data}
             hoverTime={hoverTime}
@@ -276,8 +276,8 @@ const panRight = () => {
             selection={selection}
           />
         </div>
-        <div className="col-span-3 min-h-0">
-          <V4 />
+        <div className="col-span-4 min-h-0">
+          <V4 data = {data} />
         </div>
       </main>
     </div>
