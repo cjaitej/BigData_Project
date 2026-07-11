@@ -1,20 +1,22 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
-const MARGIN = {
-  top: 20,
-  right: 30,
-  bottom: 55,
-  left: 65,
-}
+const MARGIN = { top: 16, right: 16, bottom: 40, left: 60 }
 
-export default function V2({ data, hoverTime, setHoverTime, selection }) {
+// Diverging (signed) vs sequential (magnitude) color channels — Bz keeps the
+// existing symmetric RdBu treatment, |B| and Kp are single-hue viridis.
+const CHANNELS = [
+  { key: 'imf_mag_scalar_nT', short: '|B|', label: '|B| (nT)', kind: 'seq' },
+  { key: 'bz_gsm_nT',         short: 'Bz',  label: 'Bz (nT)',  kind: 'div' },
+  { key: 'kp',                short: 'Kp',  label: 'Kp',       kind: 'seq' },
+]
 
+export default function V2({ data, selectedPoints, onSelectPoints }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
-  const stateRef = useRef(null)   // scales + hover elements for the linked-view effects
 
-  // Redraw when the grid cell resizes — chart height follows the container
+  const [channel, setChannel] = useState('bz_gsm_nT')
+
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
     if (!wrapRef.current) return
@@ -24,654 +26,248 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
   }, [])
 
   useEffect(() => {
-
     if (!data?.length || !wrapRef.current) return
 
-    const totalWidth = wrapRef.current.clientWidth
+    const totalWidth  = wrapRef.current.clientWidth
     const totalHeight = wrapRef.current.clientHeight || 450
-
-    const width =
-      totalWidth - MARGIN.left - MARGIN.right
-
-    const height =
-      totalHeight - MARGIN.top - MARGIN.bottom
+    const width  = totalWidth - MARGIN.left - MARGIN.right
+    const height = totalHeight - MARGIN.top - MARGIN.bottom
 
     const svg = d3.select(svgRef.current)
+    svg.selectAll('*').remove()
+    d3.select(wrapRef.current).selectAll('div').remove()
+    svg.attr('width', totalWidth).attr('height', totalHeight)
 
-    svg.selectAll("*").remove()
-    d3.select(wrapRef.current)
+    const defs = svg.append('defs')
+    defs.append('clipPath').attr('id', 'scatterClip')
+      .append('rect').attr('width', width).attr('height', height)
 
-    .selectAll("div")
-
-    .remove()
-
-    svg
-      .attr("width", totalWidth)
-      .attr("height", totalHeight)
-
-    //--------------------------------------------------
-    // Clip Path
-    //--------------------------------------------------
-
-    const defs = svg.append("defs")
-
-    defs.append("clipPath")
-
-        .attr("id","scatterClip")
-
-        .append("rect")
-
-        .attr("width",width)
-
-        .attr("height",height)
-
-        const plot = svg.append("g")
-
-        .attr(
-            "transform",
-            `translate(${MARGIN.left},${MARGIN.top})`
-    )
-
-    const gridGroup = plot.append("g")
-
-    const axisGroup = plot.append("g")
-
-    const pointsGroup = plot.append("g")
-    .attr("clip-path","url(#scatterClip)")
-
-    // Ring highlighting the point at the shared hover time (above the points)
-    const ringGroup = plot.append("g")
-    .attr("clip-path","url(#scatterClip)")
-
-    const ring = ringGroup.append("circle")
-
-        .attr("r", 8)
-
-        .attr("fill", "none")
-
-        .attr("stroke", "#E7EAF0")
-
-        .attr("stroke-width", 2)
-
-        .style("display", "none")
-
-        .style("pointer-events", "none")
+    const plot = svg.append('g').attr('transform', `translate(${MARGIN.left},${MARGIN.top})`)
+    const gridGroup   = plot.append('g')
+    const axisGroup   = plot.append('g')
+    const pointsGroup = plot.append('g').attr('clip-path', 'url(#scatterClip)')
+    const lassoGroup  = plot.append('g')
 
     //--------------------------------------------------
-    // Data
+    // Data — density (x, log) vs speed (y, linear)
     //--------------------------------------------------
-
     const parsed = data.filter(d =>
-
-      d.flow_speed_kms != null &&
-      d.proton_density_ncc != null
-
+      d.flow_speed_kms != null && d.proton_density_ncc != null && d.proton_density_ncc > 0
     ).map(d => ({ ...d, t: new Date(d.datetime) }))
 
-    //--------------------------------------------------
-    // Scales
-    //--------------------------------------------------
+    const densityExt = d3.extent(parsed, d => d.proton_density_ncc)
+    const x = d3.scaleLog()
+      .domain([Math.max(0.05, densityExt[0] ?? 0.1), Math.max(1, densityExt[1] ?? 50)])
+      .range([0, width]).nice()
 
-    const x = d3.scaleLinear()
-
-      .domain(d3.extent(parsed,
-        d => d.flow_speed_kms))
-
-      .nice()
-
-      .range([0, width])
-
-
-
+    const speedExt = d3.extent(parsed, d => d.flow_speed_kms)
     const y = d3.scaleLinear()
-
-      .domain(d3.extent(parsed,
-        d => d.proton_density_ncc))
-
-      .nice()
-
-      .range([height, 0])
+      .domain([Math.max(150, (speedExt[0] ?? 250) - 30), (speedExt[1] ?? 900) + 30])
+      .range([height, 0]).nice()
 
     //--------------------------------------------------
-    // Grid
+    // Grid + axes
     //--------------------------------------------------
+    gridGroup.append('g')
+      .call(d3.axisLeft(y).tickSize(-width).tickFormat(''))
+      .call(g => g.select('.domain').remove())
+      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330'))
 
-    gridGroup.append("g")
+    gridGroup.append('g')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(x).ticks(6, '~g').tickSize(-height).tickFormat(''))
+      .call(g => g.select('.domain').remove())
+      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330'))
 
-      .call(
+    axisGroup.append('g')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(x).ticks(6, '~g'))
+      .call(g => g.selectAll('text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace"))
+      .call(g => g.selectAll('line,path').attr('stroke', '#252B3A'))
 
-        d3.axisLeft(y)
-
-          .tickSize(-width)
-
-          .tickFormat("")
-
-      )
-
-      .call(g => g.select(".domain").remove())
-
-      .call(g =>
-
-        g.selectAll(".tick line")
-
-          .attr("stroke", "#1E2330")
-
-      )
-
-
-
-    gridGroup.append("g")
-
-      .attr(
-
-        "transform",
-
-        `translate(0,${height})`
-
-      )
-
-      .call(
-
-        d3.axisBottom(x)
-
-          .tickSize(-height)
-
-          .tickFormat("")
-
-      )
-
-      .call(g => g.select(".domain").remove())
-
-      .call(g =>
-
-        g.selectAll(".tick line")
-
-          .attr("stroke", "#1E2330")
-
-      )
-
-    //--------------------------------------------------
-    // Axes
-    //--------------------------------------------------
-
-    const xAxis = axisGroup
-    
-    .append("g")
-
-      .attr(
-
-        "transform",
-
-        `translate(0,${height})`
-
-      )
-
-      .call(d3.axisBottom(x).ticks(6))
-
-      .call(g =>
-
-        g.selectAll("text")
-
-          .attr("fill", "#7C8496")
-
-      )
-
-      .call(g =>
-
-        g.selectAll("line,path")
-
-          .attr("stroke", "#252B3A")
-
-      )
-
-
-
-    const yAxis = axisGroup
-    .append("g")
-
+    axisGroup.append('g')
       .call(d3.axisLeft(y).ticks(6))
-
-      .call(g =>
-
-        g.selectAll("text")
-
-          .attr("fill", "#7C8496")
-
-      )
-
-      .call(g =>
-
-        g.selectAll("line,path")
-
-          .attr("stroke", "#252B3A")
-
-      )
-
-//--------------------------------------------------
-// Color Scale (IMF Bz)
-//--------------------------------------------------
-
-const bzExtent = d3.extent(parsed, d => d.bz_gsm_nT)
-
-const maxAbs = Math.max(
-
-  Math.abs(bzExtent[0] || 0),
-
-  Math.abs(bzExtent[1] || 0)
-
-)
-
-const color = d3.scaleSequential()
-
-  .domain([maxAbs, -maxAbs])
-
-  .interpolator(d3.interpolateRdBu)
-
-
-//--------------------------------------------------
-// Tooltip
-//--------------------------------------------------
-
-const tooltip = d3
-
-  .select(wrapRef.current)
-
-  .append("div")
-
-  .style("position", "absolute")
-
-  .style("pointer-events", "none")
-
-  .style("background", "#0f172a")
-
-  .style("border", "1px solid #252B3A")
-
-  .style("border-radius", "6px")
-
-  .style("padding", "8px")
-
-  .style("font-size", "11px")
-
-  .style("color", "#e2e8f0")
-
-  .style("opacity", 0)
-
-
-//--------------------------------------------------
-// Scatter
-//--------------------------------------------------
-
-pointsGroup
-
-.selectAll("circle")
-
-.data(parsed)
-
-.enter()
-
-.append("circle")
-
-.attr("cx", d=>x(d.flow_speed_kms))
-
-.attr("cy", d=>y(d.proton_density_ncc))
-
-.attr("r",4)
-
-.attr("fill", d=>color(d.bz_gsm_nT))
-
-.attr("opacity",0.8)
-
-.on("mouseover", function(event,d){
-
-    setHoverTime(d.t)
-
-    d3.select(this)
-
-        .transition()
-
-        .duration(100)
-
-        .attr("r",7)
-
-        .attr("stroke","#ffffff")
-
-        .attr("stroke-width",1.5)
-
-    tooltip
-
-        .style("opacity",1)
-
-        .html(`
-
-<b>${new Date(d.datetime).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}</b>
-
-<hr style="border-color:#252B3A">
-
-Speed : ${d.flow_speed_kms.toFixed(1)} km/s<br>
-
-Density : ${d.proton_density_ncc.toFixed(2)} n/cc<br>
-
-Bz : ${d.bz_gsm_nT.toFixed(2)} nT<br>
-
-Kp : ${d.kp}
-
-`)
-
-})
-
-.on("mousemove", function(event){
-
-    // Clamp so the tooltip never gets cut off by the panel's own
-    // overflow-hidden — flip to the other side of the cursor instead.
-    const wrapEl = wrapRef.current
-    const node = tooltip.node()
-    const tw = node.offsetWidth, th = node.offsetHeight
-    let left = event.offsetX + 15
-    let top = event.offsetY - th - 12
-    if (left + tw > wrapEl.clientWidth) left = event.offsetX - tw - 15
-    if (left < 4) left = 4
-    if (top < 4) top = event.offsetY + 15
-    if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
-
-    tooltip
-
-        .style("left", `${left}px`)
-
-        .style("top", `${top}px`)
-
-})
-
-.on("mouseout", function(){
-
-    setHoverTime(null)
-
-    d3.select(this)
-
-        .transition()
-
-        .duration(100)
-
-        .attr("r",4)
-
-        .attr("stroke","none")
-
-    tooltip
-
-        .style("opacity",0)
-
-})
+      .call(g => g.selectAll('text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace"))
+      .call(g => g.selectAll('line,path').attr('stroke', '#252B3A'))
 
     //--------------------------------------------------
-    // Labels
+    // Color scale — active channel
     //--------------------------------------------------
-
-    svg.append("text")
-
-      .attr(
-
-        "x",
-
-        totalWidth / 2
-
-      )
-
-      .attr(
-
-        "y",
-
-        totalHeight - 10
-
-      )
-
-      .attr(
-
-        "text-anchor",
-
-        "middle"
-
-      )
-
-      .attr("fill", "#7C8496")
-
-      .attr("font-size", 11)
-
-      .text("Solar Wind Speed (km/s)")
-
-
-
-    svg.append("text")
-
-      .attr(
-
-        "transform",
-
-        "rotate(-90)"
-
-      )
-
-      .attr(
-
-        "x",
-
-        -totalHeight / 2
-
-      )
-
-      .attr(
-
-        "y",
-
-        18
-
-      )
-
-      .attr(
-
-        "text-anchor",
-
-        "middle"
-
-      )
-
-      .attr("fill", "#7C8496")
-
-      .attr("font-size", 11)
-
-      .text("Proton Density (n/cc)")
-  
-
-  //--------------------------------------------------
-  // Zoom
-  //--------------------------------------------------
-
-  const zoom = d3.zoom()
-
-  .scaleExtent([1,10])
-
-  .translateExtent([[0,0],[width,height]])
-  .extent([
-
-    [0,0],
-
-    [width,height]
-
-])
-
-  .on("zoom",(event)=>{
-
-    const transform = event.transform
-
-    const zx = transform.rescaleX(x)
-
-    const zy = transform.rescaleY(y)
-
-    // re-apply the dim styling — a bare .call() would reset to d3's defaults
-    xAxis.call(d3.axisBottom(zx).ticks(6))
-        .call(g => g.selectAll("text").attr("fill", "#7C8496"))
-        .call(g => g.selectAll("line,path").attr("stroke", "#252B3A"))
-
-    yAxis.call(d3.axisLeft(zy).ticks(6))
-        .call(g => g.selectAll("text").attr("fill", "#7C8496"))
-        .call(g => g.selectAll("line,path").attr("stroke", "#252B3A"))
-
-    pointsGroup
-
-        .selectAll("circle")
-
-        .attr("cx",d=>zx(d.flow_speed_kms))
-
-        .attr("cy",d=>zy(d.proton_density_ncc))
-    // pointsGroup.raise();
-
-    // Keep the linked-hover ring glued to its point while zooming
-    const s = stateRef.current
-
-    if (s) {
-
-        s.zx = zx
-        s.zy = zy
-
-        if (s.lastPoint) {
-
-            ring
-                .attr("cx", zx(s.lastPoint.flow_speed_kms))
-                .attr("cy", zy(s.lastPoint.proton_density_ncc))
-
-        }
-
+    const ch = CHANNELS.find(c => c.key === channel)
+    let colorScale
+    if (ch.kind === 'div') {
+      const ext = d3.extent(parsed, d => d[ch.key])
+      const maxAbs = Math.max(Math.abs(ext[0] || 0), Math.abs(ext[1] || 0)) || 15
+      colorScale = d3.scaleSequential().domain([maxAbs, -maxAbs]).interpolator(d3.interpolateRdBu)
+    } else if (ch.key === 'kp') {
+      colorScale = d3.scaleSequential().domain([0, 9]).interpolator(d3.interpolateViridis)
+    } else {
+      const ext = d3.extent(parsed, d => d[ch.key])
+      colorScale = d3.scaleSequential().domain([ext[0] ?? 0, ext[1] ?? 1]).interpolator(d3.interpolateViridis)
     }
 
-})
+    //--------------------------------------------------
+    // Tooltip
+    //--------------------------------------------------
+    const tooltip = d3.select(wrapRef.current).append('div')
+      .style('position', 'absolute')
+      .style('pointer-events', 'none')
+      .style('background', '#12151C')
+      .style('border', '1px solid #252B3A')
+      .style('border-radius', '6px')
+      .style('padding', '8px')
+      .style('font-family', "'JetBrains Mono', monospace")
+      .style('font-size', '11px')
+      .style('color', '#E7EAF0')
+      .style('opacity', 0)
 
-  svg.call(zoom)
+    //--------------------------------------------------
+    // Scatter
+    //--------------------------------------------------
+    const selSet = new Set(selectedPoints ?? [])
+    const hasSel = selSet.size > 0
 
-  stateRef.current = {
+    const dots = pointsGroup.selectAll('circle').data(parsed).enter().append('circle')
+      .attr('cx', d => x(d.proton_density_ncc))
+      .attr('cy', d => y(d.flow_speed_kms))
+      .attr('r', 3.5)
+      .attr('fill', d => d[ch.key] == null ? '#4B5265' : colorScale(d[ch.key]))
+      .attr('fill-opacity', d => hasSel ? (selSet.has(d.datetime) ? 0.9 : 0.12) : 0.75)
+      .attr('stroke', d => hasSel && selSet.has(d.datetime) ? '#E7EAF0' : 'none')
+      .attr('stroke-width', 1)
 
-      parsed,
+    function positionTooltip(event) {
+      const wrapEl = wrapRef.current
+      const node = tooltip.node()
+      const tw = node.offsetWidth, th = node.offsetHeight
+      let left = event.offsetX + 15
+      let top = event.offsetY - th - 12
+      if (left + tw > wrapEl.clientWidth) left = event.offsetX - tw - 15
+      if (left < 4) left = 4
+      if (top < 4) top = event.offsetY + 15
+      if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
+      tooltip.style('left', `${left}px`).style('top', `${top}px`)
+    }
 
-      zx: x,
+    dots.on('mouseover', function (event, d) {
+      d3.select(this).transition().duration(100).attr('r', 6).attr('stroke', '#E7EAF0').attr('stroke-width', 1.5)
+      tooltip.style('opacity', 1).html(`
+        <b>${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}</b>
+        <hr style="border-color:#252B3A">
+        Speed : ${d.flow_speed_kms.toFixed(1)} km/s<br>
+        Density : ${d.proton_density_ncc.toFixed(2)} n/cc<br>
+        ${ch.label} : ${d[ch.key] != null ? d[ch.key].toFixed(2) : '--'}<br>
+        Kp : ${d.kp ?? '--'}
+      `)
+      positionTooltip(event)
+    })
+      .on('mousemove', (event) => positionTooltip(event))
+      .on('mouseout', function () {
+        d3.select(this).transition().duration(100).attr('r', 3.5)
+          .attr('stroke', d => hasSel && selSet.has(d.datetime) ? '#E7EAF0' : 'none')
+        tooltip.style('opacity', 0)
+      })
 
-      zy: y,
+    //--------------------------------------------------
+    // Axis labels
+    //--------------------------------------------------
+    svg.append('text')
+      .attr('x', MARGIN.left + width / 2).attr('y', totalHeight - 8)
+      .attr('text-anchor', 'middle').attr('fill', '#7C8496').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
+      .text('Proton Density (n/cc, log scale)')
 
-      ring,
+    svg.append('text')
+      .attr('transform', 'rotate(-90)')
+      .attr('x', -(MARGIN.top + height / 2)).attr('y', 16)
+      .attr('text-anchor', 'middle').attr('fill', '#7C8496').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
+      .text('Solar Wind Speed (km/s)')
 
-      pointsGroup,
+    //--------------------------------------------------
+    // Freehand lasso — one hit-test at mouseup, not per frame
+    //--------------------------------------------------
+    let lassoPts = null
+    let lassoPath = null
 
-      bisect: d3.bisector(d => d.t).center,
+    svg.on('pointerdown', (event) => {
+      if (event.button !== 0) return
+      svg.node().setPointerCapture(event.pointerId)
+      const [mx, my] = d3.pointer(event, plot.node())
+      lassoPts = [[mx, my]]
+      lassoPath = lassoGroup.append('path')
+        .attr('fill', '#8b5cf6').attr('fill-opacity', 0.06)
+        .attr('stroke', '#8b5cf6').attr('stroke-width', 1).attr('stroke-dasharray', '3,3')
+      event.preventDefault()
+    })
 
-      lastPoint: null,
+    svg.on('pointermove', (event) => {
+      if (!lassoPts) return
+      const last = lassoPts[lassoPts.length - 1]
+      const [mx, my] = d3.pointer(event, plot.node())
+      if (Math.hypot(mx - last[0], my - last[1]) < 3) return   // cap vertex density
+      if (lassoPts.length >= 150) return                       // cap total vertices
+      lassoPts.push([mx, my])
+      lassoPath.attr('d', 'M' + lassoPts.map(p => p.join(',')).join('L'))
+    })
 
-  }
+    svg.on('pointerup pointercancel', () => {
+      if (!lassoPts) return
+      const pts = lassoPts
+      lassoPts = null
+      lassoPath?.remove()
+      lassoPath = null
 
-  }, [data, sizeTick, setHoverTime])
-
-  //--------------------------------------------------
-  // Linked hover — ring the point nearest the
-  // shared hover time (set here, in V1 or in V3)
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const s = stateRef.current
-    if (!s) return
-
-    if (!hoverTime || !s.parsed.length) {
-
-        s.lastPoint = null
-
-        s.ring.style("display", "none")
-
+      const [minX, maxX] = d3.extent(pts, p => p[0])
+      const [minY, maxY] = d3.extent(pts, p => p[1])
+      const tooSmall = pts.length < 5 || (maxX - minX) * (maxY - minY) < 60
+      if (tooSmall) {
+        if (onSelectPoints) onSelectPoints([])
         return
-    }
+      }
+      const inside = parsed
+        .filter(d => d3.polygonContains(pts, [x(d.proton_density_ncc), y(d.flow_speed_kms)]))
+        .map(d => d.datetime)
+      if (onSelectPoints) onSelectPoints(inside)
+    })
 
-    const p = s.parsed[s.bisect(s.parsed, hoverTime)]
-    if (!p) return
-
-    s.lastPoint = p
-
-    s.ring
-
-        .style("display", null)
-
-        .attr("cx", s.zx(p.flow_speed_kms))
-
-        .attr("cy", s.zy(p.proton_density_ncc))
-
-  }, [hoverTime, data])
-
-  //--------------------------------------------------
-  // Linked selection — dim points outside the
-  // range brushed in V1
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const s = stateRef.current
-    if (!s) return
-
-    if (!selection) {
-
-        s.pointsGroup.selectAll("circle").attr("opacity", 0.8)
-
-        return
-    }
-
-    const [t0, t1] = selection
-
-    s.pointsGroup.selectAll("circle")
-
-        .attr("opacity", d => (d.t >= t0 && d.t <= t1) ? 0.9 : 0.05)
-
-  }, [selection, data])
+  }, [data, sizeTick, channel, selectedPoints, onSelectPoints])
 
   return (
-
-    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-
-      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
-
-        <span className="text-sm font-semibold text-slate-200" title="Speed vs density, colored by IMF Bz · scroll to zoom · hover syncs all panels">
-
+    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60">
+        <span className="text-sm font-semibold text-space-text" title="Density vs speed · drag a lasso to select points · color channel toggle on the right">
           Phase Space
-
         </span>
 
-      </div>
-
-      <div
-
-        ref={wrapRef}
-
-        className="relative w-full flex-1 min-h-0 overflow-hidden"
-
-      >
-
-        {
-
-          !data?.length ?
-
-          <div className="flex items-center justify-center h-full text-slate-500">
-
-            Waiting for data...
-
+        <div className="ml-auto flex items-center gap-2 font-mono">
+          <div className="flex items-center rounded-md border border-space-hairline overflow-hidden">
+            {CHANNELS.map(c => (
+              <button
+                key={c.key}
+                onClick={() => setChannel(c.key)}
+                className={`px-2 py-0.5 text-[10px] transition-colors ${
+                  channel === c.key ? 'bg-space-violet text-white' : 'bg-space-panel-2 text-space-dim hover:text-space-text'
+                }`}
+              >
+                {c.short}
+              </button>
+            ))}
           </div>
-
-          :
-
-          <svg
-
-            ref={svgRef}
-
-            style={{ display: "block" }}
-
-          />
-
-        }
-
+          <button
+            onClick={() => onSelectPoints?.([])}
+            title="Clear the lassoed selection"
+            className="px-2 py-0.5 text-[10px] rounded bg-space-panel-2 border border-space-hairline text-space-dim hover:text-space-text transition-colors"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
+      <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden" style={{ cursor: 'crosshair' }}>
+        {!data?.length
+          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
+          : <svg ref={svgRef} style={{ display: 'block' }} />
+        }
+      </div>
     </div>
-
   )
-
 }

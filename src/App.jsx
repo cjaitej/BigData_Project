@@ -29,18 +29,44 @@ export default function App() {
   const [draftStart, setDraftStart] = useState(DEFAULT_START)
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
-  // Linked-view state shared by V1 / V2 / V3
-  const [hoverTime, setHoverTime] = useState(null)   // Date | null — synced cursor
-  const [selection, setSelection] = useState(null)   // [Date, Date] | null — brushed range
+  // Full storm catalog (id/peak_time/intensity/...) — fetched once, shared by
+  // V3 (click-to-select), V4 (storm + comparison pickers), V5 (quick-jump).
+  const [stormCatalog, setStormCatalog] = useState([])
+  useEffect(() => {
+    fetch('/api/orbital/storms')
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(setStormCatalog)
+      .catch(e => console.error('Failed to load storm catalog:', e))
+  }, [])
 
-  // Every range change goes through here so the linked cursor/brush reset too
+  // Linked-view state shared across panels.
+  // selectedPoints: ISO timestamps lassoed in V2 — shown as tick marks in V1/V3.
+  const [selectedPoints, setSelectedPoints] = useState([])
+  // selectedStorm: set by clicking a storm band in V3, or picking one in V4;
+  // simDate/simHour follow it so V5 can jump to the same moment (a one-way
+  // "documented deviation", not a two-way sync — V5 has its own controls too).
+  const [selectedStorm, setSelectedStorm] = useState(null)
+  const [simDate, setSimDate] = useState(DEFAULT_START)
+  const [simHour, setSimHour] = useState(0)
+
+  // Picking a storm anywhere (V3 click or V4's picker) drives this one path.
+  const jumpToStorm = (storm) => {
+    setSelectedStorm(storm)
+    if (storm?.peak_time) {
+      setSimDate(storm.peak_time.slice(0, 10))
+      setSimHour(Number(storm.peak_time.slice(11, 13)))
+    }
+  }
+
+  // Every loaded-window change clears the lasso selection (points may fall
+  // outside the new window) but never touches selectedStorm/simDate/simHour —
+  // V4/V5 are intentionally decoupled from the header's date range.
   const applyRange = (newStart, newEnd) => {
     setStart(newStart)
     setEnd(newEnd)
     setDraftStart(newStart)
     setDraftEnd(newEnd)
-    setHoverTime(null)
-    setSelection(null)
+    setSelectedPoints([])
   }
 
   const zoomIn = () => {
@@ -260,12 +286,11 @@ const panRight = () => {
       >
         <div className="min-h-0">
           <V5
-            start={start}
-            end={end}
-            hoverTime={hoverTime}
-            setHoverTime={setHoverTime}
-            selection={selection}
-            applyRange={applyRange}
+            simDate={simDate}
+            simHour={simHour}
+            setSimDate={setSimDate}
+            setSimHour={setSimHour}
+            stormCatalog={stormCatalog}
           />
         </div>
         <div className="min-h-0 overflow-hidden grid grid-rows-4 gap-2">
@@ -274,30 +299,30 @@ const panRight = () => {
               data={data}
               setDraftStart={setDraftStart}
               setDraftEnd={setDraftEnd}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
-              setSelection={setSelection}
+              selectedPoints={selectedPoints}
             />
           </div>
           <div className="min-h-0 overflow-hidden">
             <V3
               data={data}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
+              selectedPoints={selectedPoints}
+              stormCatalog={stormCatalog}
+              onSelectStorm={jumpToStorm}
             />
           </div>
           <div className="min-h-0 overflow-hidden">
             <V2
               data={data}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
+              selectedPoints={selectedPoints}
+              onSelectPoints={setSelectedPoints}
             />
           </div>
           <div className="min-h-0 overflow-hidden">
-            <V4 data={data} />
+            <V4
+              stormCatalog={stormCatalog}
+              selectedStorm={selectedStorm}
+              onSelectStorm={jumpToStorm}
+            />
           </div>
         </div>
       </main>

@@ -1,52 +1,63 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
+// Fixed domains (not d3.extent on the loaded window) so a given color always
+// means the same physical value regardless of zoom level — the whole point
+// of a spectrogram meant to be compared across different time windows.
 const ROWS = [
   {
     key:   'bz_gsm_nT',
     label: 'IMF Bz',
     unit:  'nT',
-    colorFn: (val, ext) => {
-      const absMax = Math.max(Math.abs(ext[0] ?? 0), Math.abs(ext[1] ?? 0)) || 30
-      const t = (val + absMax) / (2 * absMax)
-      return d3.interpolateRdBu(Math.max(0, Math.min(1, t)))
+    // clipped to ±15 nT — a diverging scale with a fixed, physically
+    // meaningful range instead of stretching to whatever this window's max is
+    colorFn: (val) => {
+      const clipped = Math.max(-15, Math.min(15, val))
+      return d3.interpolateRdBu((clipped + 15) / 30)
     },
   },
   {
     key:   'flow_speed_kms',
     label: 'SW Speed',
     unit:  'km/s',
-    colorFn: (val, ext) => {
-      const span = (ext[1] - ext[0]) || 1
-      return d3.interpolateViridis(Math.max(0, Math.min(1, (val - ext[0]) / span)))
-    },
+    colorFn: (val) => d3.interpolateViridis(Math.max(0, Math.min(1, (val - 250) / (800 - 250)))),
   },
   {
     key:   'proton_density_ncc',
     label: 'Density',
     unit:  'n/cc',
-    colorFn: (val, ext) => {
-      const span = (ext[1] - ext[0]) || 1
-      return d3.interpolateMagma(Math.max(0, Math.min(1, (val - ext[0]) / span)))
-    },
+    colorFn: (val) => d3.interpolateViridis(Math.max(0, Math.min(1, val / 30))),
   },
   {
     key:   'kp',
     label: 'Kp index',
     unit:  '0–9',
-    colorFn: (val) => d3.interpolateInferno(Math.max(0, Math.min(1, val / 9))),
+    colorFn: (val) => d3.interpolateViridis(Math.max(0, Math.min(1, val / 9))),
   },
 ]
 
+// Legend domains matching colorFn, for the mini colorbars.
+const LEGEND_DOMAIN = {
+  bz_gsm_nT: [-15, 15],
+  flow_speed_kms: [250, 800],
+  proton_density_ncc: [0, 30],
+  kp: [0, 9],
+}
+
 const MARGIN = { top: 8, right: 24, bottom: 36, left: 64 }
 
-export default function V3({ data, hoverTime, setHoverTime, selection }) {
+// Both /api/data and /api/orbital/storms represent the same UTC instants,
+// just formatted differently (no 'Z' suffix vs 'Z'-suffixed) — compare them
+// as plain ISO strings, never via `new Date()`, which would parse one family
+// as local time and the other as UTC and silently shift them apart.
+const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
+
+export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }) {
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
   const svgRef       = useRef(null)
-  const chartRef     = useRef(null)   // scales + hover elements for the linked-view effects
+  const chartRef     = useRef(null)
 
-  // Redraw when the grid cell resizes — row height follows the container
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
     if (!containerRef.current) return
@@ -63,9 +74,6 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
     const ROW_H   = Math.max(24, (availH - MARGIN.top - MARGIN.bottom) / ROWS.length)
     const chartW  = totalW - MARGIN.left - MARGIN.right
     const chartH  = ROWS.length * ROW_H
-
-    const extents = {}
-    ROWS.forEach(row => { extents[row.key] = d3.extent(data, d => d[row.key]) })
 
     const parsed = data.map(d => ({ ...d, t: new Date(d.datetime) }))
     const xScale = d3.scaleTime()
@@ -89,12 +97,11 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
     const colW = chartW / parsed.length
 
     ROWS.forEach((row, ri) => {
-      const ext = extents[row.key]
       const rowTop = ri * ROW_H
       parsed.forEach((d, ci) => {
         const val = d[row.key]
         if (val == null) return
-        ctx.fillStyle = row.colorFn(val, ext)
+        ctx.fillStyle = row.colorFn(val)
         ctx.fillRect(ci * colW, rowTop, Math.max(1, Math.ceil(colW)), ROW_H - 1)
       })
     })
@@ -110,12 +117,12 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
       svg.append('text')
         .attr('x', MARGIN.left - 6).attr('y', cy - 5)
         .attr('text-anchor', 'end').attr('dominant-baseline', 'middle')
-        .attr('fill', '#94a3b8').attr('font-size', 10).attr('font-family', 'ui-monospace, monospace')
+        .attr('fill', '#7C8496').attr('font-size', 10).attr('font-family', "'JetBrains Mono', monospace")
         .text(row.label)
       svg.append('text')
         .attr('x', MARGIN.left - 6).attr('y', cy + 8)
         .attr('text-anchor', 'end').attr('dominant-baseline', 'middle')
-        .attr('fill', '#475569').attr('font-size', 8).attr('font-family', 'ui-monospace, monospace')
+        .attr('fill', '#4B5265').attr('font-size', 8).attr('font-family', "'JetBrains Mono', monospace")
         .text(`(${row.unit})`)
     })
 
@@ -124,104 +131,112 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
       svg.append('line')
         .attr('x1', MARGIN.left).attr('x2', MARGIN.left + chartW)
         .attr('y1', MARGIN.top + ri * ROW_H).attr('y2', MARGIN.top + ri * ROW_H)
-        .attr('stroke', '#1e293b').attr('stroke-width', 1)
+        .attr('stroke', '#1E2330').attr('stroke-width', 1)
     }
 
-    // Storm band outlines
-    let inStorm = false, stormStart = null
+    // Storm intervals detected locally (contiguous storm_flag runs), each
+    // paired with a clickable hit-rect matched against the richer catalog.
+    const stormIntervals = []
+    let inStorm = false, stormStartT = null, stormStartRaw = null
     parsed.forEach((d, i) => {
-      if (d.storm_flag && !inStorm) { inStorm = true; stormStart = d.t }
+      if (d.storm_flag && !inStorm) { inStorm = true; stormStartT = d.t; stormStartRaw = d.datetime }
       if (!d.storm_flag && inStorm) {
-        const x1 = xScale(stormStart), x2 = xScale(parsed[i - 1].t)
-        svg.append('rect')
-          .attr('x', MARGIN.left + x1).attr('y', MARGIN.top)
-          .attr('width', Math.max(1, x2 - x1)).attr('height', chartH)
-          .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
+        stormIntervals.push({ t0: stormStartT, t1: parsed[i - 1].t, raw0: stormStartRaw, raw1: parsed[i - 1].datetime })
         inStorm = false
       }
     })
     if (inStorm) {
-      const x1 = xScale(stormStart), x2 = xScale(parsed[parsed.length - 1].t)
-      svg.append('rect')
-        .attr('x', MARGIN.left + x1).attr('y', MARGIN.top)
-        .attr('width', Math.max(1, x2 - x1)).attr('height', chartH)
-        .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
+      stormIntervals.push({ t0: stormStartT, t1: parsed[parsed.length - 1].t, raw0: stormStartRaw, raw1: parsed[parsed.length - 1].datetime })
     }
+
+    // Visual outlines only here — the clickable hit-rects are added later,
+    // layered on top of the generic hover rect, so clicks reach them instead
+    // of being swallowed by the hover layer's pointer-events:all.
+    const bandsG = svg.append('g')
+    const clickableStorms = []
+    stormIntervals.forEach(({ t0, t1, raw0, raw1 }) => {
+      const x1 = MARGIN.left + xScale(t0), x2 = MARGIN.left + xScale(t1)
+      const w = Math.max(1, x2 - x1)
+
+      bandsG.append('rect')
+        .attr('x', x1).attr('y', MARGIN.top)
+        .attr('width', w).attr('height', chartH)
+        .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
+
+      const match = stormCatalog?.find(s => stripZ(s.start) <= raw1 && stripZ(s.end) >= raw0)
+      if (match && onSelectStorm) clickableStorms.push({ x1, w, match })
+    })
 
     // Chart border
     svg.append('rect')
       .attr('x', MARGIN.left).attr('y', MARGIN.top)
       .attr('width', chartW).attr('height', chartH)
-      .attr('fill', 'none').attr('stroke', '#1e293b').attr('stroke-width', 1)
+      .attr('fill', 'none').attr('stroke', '#1E2330').attr('stroke-width', 1)
 
-    // X axis — dimmed so the heatmap cells stay the brightest pixels
+    // X axis
     svg.append('g')
       .attr('transform', `translate(${MARGIN.left},${MARGIN.top + chartH})`)
       .call(d3.axisBottom(xScale).ticks(Math.max(3, Math.round(chartW / 110))))
-      .call(ax => ax.select('.domain').attr('stroke', '#1e293b'))
-      .call(ax => ax.selectAll('.tick line').attr('stroke', '#1e293b'))
-      .call(ax => ax.selectAll('.tick text').attr('fill', '#64748b').attr('font-size', 10))
+      .call(ax => ax.select('.domain').attr('stroke', '#1E2330'))
+      .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330'))
+      .call(ax => ax.selectAll('.tick text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 10))
+
+    // Selection strip: ISO timestamps lassoed in Phase Space
+    if (selectedPoints?.length) {
+      const selSet = new Set(selectedPoints)
+      const stripG = svg.append('g')
+      parsed.forEach(d => {
+        if (!selSet.has(d.datetime)) return
+        const px = MARGIN.left + xScale(d.t)
+        stripG.append('line')
+          .attr('x1', px).attr('x2', px)
+          .attr('y1', MARGIN.top + chartH - 6).attr('y2', MARGIN.top + chartH)
+          .attr('stroke', '#8b5cf6').attr('stroke-width', 1.5)
+      })
+    }
 
     // Mini colorbars (right side)
     const barW = 6, barSteps = 20
     ROWS.forEach((row, ri) => {
-      const ext    = extents[row.key]
+      const dom    = LEGEND_DOMAIN[row.key]
       const barX   = MARGIN.left + chartW + 6
       const barTop = MARGIN.top + ri * ROW_H + 4
       const barH   = ROW_H - 8
       for (let s = 0; s < barSteps; s++) {
         const t   = s / (barSteps - 1)
-        const val = (ext[0] ?? 0) + t * ((ext[1] ?? 1) - (ext[0] ?? 0))
+        const val = dom[0] + t * (dom[1] - dom[0])
         svg.append('rect')
           .attr('x', barX)
           .attr('y', barTop + (barSteps - 1 - s) * (barH / barSteps))
           .attr('width', barW)
           .attr('height', Math.ceil(barH / barSteps) + 1)
-          .attr('fill', row.colorFn(val, ext))
+          .attr('fill', row.colorFn(val))
       }
     })
 
     //--------------------------------------------------
-    // Hover + linked-view layer
+    // Hover — local-only tooltip (no cross-panel cursor sync)
     //--------------------------------------------------
 
     const bisect = d3.bisector(d => d.t).center
 
-    // Persistent band showing the shared selection (drawn by the selection effect)
-    const persistBand = svg.append('rect')
-      .attr('y', MARGIN.top)
-      .attr('height', chartH)
-      .attr('fill', 'rgba(139,92,246,0.12)')
-      .attr('stroke', '#8b5cf6')
-      .attr('stroke-dasharray', '3,3')
-      .style('display', 'none')
-
-    // Cursor line driven by shared hoverTime
-    const hoverLine = svg.append('line')
-      .attr('y1', MARGIN.top)
-      .attr('y2', MARGIN.top + chartH)
-      .attr('stroke', '#e2e8f0')
-      .attr('stroke-width', 1)
-      .attr('stroke-dasharray', '4,3')
-      .style('display', 'none')
-
-    // Tooltip (recreate on each draw)
     d3.select(containerRef.current).selectAll('div.v3-tooltip').remove()
     const tooltip = d3.select(containerRef.current)
       .append('div')
       .attr('class', 'v3-tooltip')
       .style('position', 'absolute')
       .style('pointer-events', 'none')
-      .style('background', '#0f172a')
-      .style('border', '1px solid #334155')
+      .style('background', '#12151C')
+      .style('border', '1px solid #252B3A')
       .style('border-radius', '6px')
       .style('padding', '8px')
+      .style('font-family', "'JetBrains Mono', monospace")
       .style('font-size', '11px')
-      .style('color', '#e2e8f0')
+      .style('color', '#E7EAF0')
       .style('z-index', 10)
       .style('opacity', 0)
 
-    // Invisible hit area — overrides the svg's pointer-events:none
+    // Invisible hit area for hover, covering the whole chart
     svg.append('rect')
       .attr('x', MARGIN.left)
       .attr('y', MARGIN.top)
@@ -230,16 +245,11 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
       .attr('fill', 'transparent')
       .style('pointer-events', 'all')
       .style('cursor', 'crosshair')
-
       .on('mousemove', function (event) {
-
         const [mx] = d3.pointer(event, this)
-
         const date = xScale.invert(mx - MARGIN.left)
         const d = parsed[bisect(parsed, date)]
         if (!d) return
-
-        setHoverTime(d.t)
 
         tooltip
           .style('opacity', 1)
@@ -247,7 +257,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
             <div style="font-weight:600;margin-bottom:6px;">
               ${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
             </div>
-            <hr style="border-color:#334155;margin:4px 0"/>
+            <hr style="border-color:#252B3A;margin:4px 0"/>
             IMF Bz : ${d.bz_gsm_nT?.toFixed(2) ?? '--'} nT<br/>
             SW Speed : ${d.flow_speed_kms?.toFixed(1) ?? '--'} km/s<br/>
             Density : ${d.proton_density_ncc?.toFixed(2) ?? '--'} n/cc<br/>
@@ -256,8 +266,6 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
             <b>Storm</b> : ${d.storm_flag ? '🔴 Yes' : '🟢 No'}
           `)
 
-        // Clamp so the tooltip never gets cut off by the panel's own
-        // overflow-hidden — flip to the other side of the cursor instead.
         const contEl = containerRef.current
         const node = tooltip.node()
         const tw = node.offsetWidth, th = node.offsetHeight
@@ -269,88 +277,41 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
         if (top + th > contEl.clientHeight) top = contEl.clientHeight - th - 4
         tooltip.style('left', `${left}px`).style('top', `${top}px`)
       })
-
       .on('mouseout', () => {
-        setHoverTime(null)
         tooltip.style('opacity', 0)
       })
 
-    chartRef.current = { xScale, parsed, bisect, hoverLine, persistBand }
+    // Storm click hit-rects — layered on top of the hover rect so clicks
+    // reach them (mousemove over a storm band goes to the click rect instead
+    // of the hover rect; losing the tooltip exactly there is an acceptable
+    // trade for the red outline already marking it as a storm).
+    clickableStorms.forEach(({ x1, w, match }) => {
+      svg.append('rect')
+        .attr('x', x1).attr('y', MARGIN.top)
+        .attr('width', Math.max(6, w)).attr('height', chartH)
+        .attr('fill', 'transparent')
+        .style('cursor', 'pointer')
+        .style('pointer-events', 'all')
+        .on('click', () => onSelectStorm(match))
+        .append('title')
+        .text(`${match.intensity} storm · peak Dst ${match.peak_dst_nT} nT — click to inspect in Storm Inspector / jump Orbital Sim`)
+    })
 
-  }, [data, sizeTick, setHoverTime])
+    chartRef.current = { xScale }
 
-  //--------------------------------------------------
-  // Linked hover — cursor driven by shared hoverTime
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const c = chartRef.current
-    if (!c) return
-
-    const { xScale, parsed, bisect, hoverLine } = c
-
-    // note: never return the d3 selection from the effect — React would
-    // treat it as a cleanup function and crash
-    const hide = () => { hoverLine.style('display', 'none') }
-
-    if (!hoverTime || !parsed.length) return hide()
-
-    const [d0, d1] = xScale.domain()
-    if (hoverTime < d0 || hoverTime > d1) return hide()
-
-    const d = parsed[bisect(parsed, hoverTime)]
-    if (!d) return hide()
-
-    const cx = MARGIN.left + xScale(d.t)
-    hoverLine.style('display', null).attr('x1', cx).attr('x2', cx)
-
-  }, [hoverTime, data])
-
-  //--------------------------------------------------
-  // Linked selection — persistent band for the
-  // shared brushed range
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const c = chartRef.current
-    if (!c) return
-
-    const { xScale, persistBand } = c
-
-    if (!selection) {
-      persistBand.style('display', 'none')
-      return
-    }
-
-    const [d0, d1] = xScale.domain()
-    const s = Math.max(selection[0], d0)
-    const e = Math.min(selection[1], d1)
-
-    if (e <= s) {
-      persistBand.style('display', 'none')
-      return
-    }
-
-    persistBand
-      .style('display', null)
-      .attr('x', MARGIN.left + xScale(s))
-      .attr('width', xScale(e) - xScale(s))
-
-  }, [selection, data])
+  }, [data, selectedPoints, stormCatalog, onSelectStorm, sizeTick])
 
   return (
-    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
       {/* Panel header */}
-      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-sm font-semibold text-slate-200" title="Parameter heatmap · red outline = storm period · hover syncs all panels">Event Spectrogram</span>
+      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60">
+        <span className="text-sm font-semibold text-space-text" title="Fixed-domain parameter heatmap · red outline = storm period, click to inspect · violet ticks = points lassoed in Phase Space">Event Spectrogram</span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
       <div ref={containerRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
-          ? <div className="flex items-center justify-center h-full text-slate-500 text-sm">Waiting for data…</div>
+          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
           : <>
               <canvas ref={canvasRef} style={{ position: 'absolute' }} />
               <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'block' }} />

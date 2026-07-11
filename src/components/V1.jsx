@@ -1,22 +1,21 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
-const PANELS = [
+const PARAMS = [
   { key: 'flow_speed_kms',     label: 'Speed',   unit: 'km/s', color: '#4ade80' },
   { key: 'proton_density_ncc', label: 'Density', unit: 'n/cc', color: '#60a5fa' },
   { key: 'bz_gsm_nT',          label: 'Bz',      unit: 'nT',   color: '#f87171', zeroline: true },
   { key: 'pdyn_computed_nPa',  label: 'Pdyn',    unit: 'nPa',  color: '#fbbf24' },
 ]
 
-const MARGIN  = { top: 8, right: 20, bottom: 36, left: 46 }
-const PANEL_GAP = 10
+const MARGIN = { top: 10, right: 20, bottom: 36, left: 55 }
 
-export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHoverTime, selection, setSelection }) {
+export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
-  const chartRef = useRef(null)   // scales + hover elements for the linked-view effects
 
-  // Redraw when the grid cell resizes — chart height follows the container
+  const [activeParam, setActiveParam] = useState('flow_speed_kms')
+
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
     if (!wrapRef.current) return
@@ -29,11 +28,10 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
     if (!data?.length || !svgRef.current || !wrapRef.current) return
 
     const totalW = wrapRef.current.clientWidth
-    const availH = wrapRef.current.clientHeight || 419
-    const W      = totalW - MARGIN.left - MARGIN.right
-    const n      = PANELS.length
-    const PANEL_H = Math.max(30, (availH - MARGIN.top - MARGIN.bottom - (n - 1) * PANEL_GAP) / n)
-    const totalH = MARGIN.top + n * PANEL_H + (n - 1) * PANEL_GAP + MARGIN.bottom
+    const totalH = wrapRef.current.clientHeight || 300
+    const W = totalW - MARGIN.left - MARGIN.right
+    const H = totalH - MARGIN.top - MARGIN.bottom
+    const param = PARAMS.find(p => p.key === activeParam)
 
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
@@ -45,11 +43,14 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
 
     const bisectDate = d3.bisector(d => d.t).center
 
-    const panelInfo = []
-
     const xScale = d3.scaleTime()
       .domain(d3.extent(parsed, d => d.t))
       .range([0, W])
+
+    const vals = parsed.map(d => d[param.key]).filter(v => v != null)
+    const [yMin, yMax] = vals.length ? d3.extent(vals) : [0, 1]
+    const pad = (yMax - yMin) * 0.08 || 1
+    const yScale = d3.scaleLinear().domain([yMin - pad, yMax + pad]).range([H, 0])
 
     // Detect contiguous storm intervals once
     const stormIntervals = []
@@ -63,125 +64,106 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
     })
     if (inStorm) stormIntervals.push([stormStart, parsed[parsed.length - 1].t])
 
-    PANELS.forEach((panel, i) => {
-      const yTop = MARGIN.top + i * (PANEL_H + PANEL_GAP)
-      const g    = svg.append('g').attr('transform', `translate(${MARGIN.left},${yTop})`)
+    const g = svg.append('g').attr('transform', `translate(${MARGIN.left},${MARGIN.top})`)
 
-      const vals = parsed.map(d => d[panel.key]).filter(v => v != null)
-      if (!vals.length) return
+    // Panel background
+    g.append('rect').attr('width', W).attr('height', H).attr('fill', '#0E1117').attr('rx', 3)
 
-      const [yMin, yMax] = d3.extent(vals)
-      const pad = (yMax - yMin) * 0.08 || 1
-      const yScale = d3.scaleLinear().domain([yMin - pad, yMax + pad]).range([PANEL_H, 0])
-
-      // Pick tick values that won't crowd the panel's own top/bottom edge —
-      // a label right at y=0 or y=PANEL_H would bleed into the next panel
-      // across the narrow gap between them.
-      const tickCount = PANEL_H < 45 ? 2 : 3
-      const EDGE_MARGIN = 7
-      const rawTicks = yScale.ticks(tickCount)
-      const yTickValues = rawTicks.filter(v => {
-        const py = yScale(v)
-        return py > EDGE_MARGIN && py < PANEL_H - EDGE_MARGIN
-      })
-      if (!yTickValues.length) yTickValues.push(...rawTicks)
-
-      // Panel background
+    // Storm shading — violet, so it never blends into the red Bz line
+    stormIntervals.forEach(([s, e]) => {
       g.append('rect')
-        .attr('width', W).attr('height', PANEL_H)
-        .attr('fill', '#0E1117').attr('rx', 3)
-
-      // Storm shading — violet, so it never blends into the red Bz line
-      stormIntervals.forEach(([s, e]) => {
-        g.append('rect')
-          .attr('x', xScale(s)).attr('y', 0)
-          .attr('width', Math.max(1, xScale(e) - xScale(s)))
-          .attr('height', PANEL_H)
-          .attr('fill', 'rgba(168,85,247,0.14)')
-      })
-
-      // Zero line (Bz only)
-      if (panel.zeroline && yMin < 0 && yMax > 0) {
-        const y0 = yScale(0)
-        g.append('line')
-          .attr('x1', 0).attr('x2', W).attr('y1', y0).attr('y2', y0)
-          .attr('stroke', '#252B3A').attr('stroke-dasharray', '4,3').attr('stroke-width', 1)
-      }
-
-      // Grid lines
-      g.append('g')
-        .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(-W).tickFormat(''))
-        .call(ax => ax.select('.domain').remove())
-        .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-width', 1))
-
-      // Line
-      const line = d3.line()
-        .defined(d => d[panel.key] != null)
-        .x(d => xScale(d.t))
-        .y(d => yScale(d[panel.key]))
-        .curve(d3.curveLinear)
-
-      g.append('path')
-        .datum(parsed)
-        .attr('fill', 'none')
-        .attr('stroke', panel.color)
-        .attr('stroke-width', 1.2)
-        .attr('d', line)
-
-      const hoverCircle = g.append('circle')
-        .attr('r', 5)
-        .attr('fill', panel.color)
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 1.5)
-        .style('display', 'none')
-
-      panelInfo.push({
-        panel,
-        yScale,
-        hoverCircle
-      })
-
-      // Y axis ticks — dimmed so the data lines stay the brightest pixels
-      g.append('g')
-        .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(4))
-        .call(ax => ax.select('.domain').remove())
-        .call(ax => ax.selectAll('.tick line').attr('stroke', '#252B3A'))
-        .call(ax => ax.selectAll('.tick text')
-          .attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 9).attr('dx', -2))
+        .attr('x', xScale(s)).attr('y', 0)
+        .attr('width', Math.max(1, xScale(e) - xScale(s)))
+        .attr('height', H)
+        .attr('fill', 'rgba(168,85,247,0.14)')
     })
 
-    // Shared X axis — dimmed so the data lines stay the brightest pixels
-    const xAxisY = MARGIN.top + n * PANEL_H + (n - 1) * PANEL_GAP
-    svg.append('g')
-      .attr('transform', `translate(${MARGIN.left},${xAxisY})`)
-      .call(d3.axisBottom(xScale).ticks(Math.max(3, Math.round(W / 110))))
-      .call(ax => ax.select('.domain').attr('stroke', '#252B3A'))
+    // Zero line (Bz only)
+    if (param.zeroline && yMin < 0 && yMax > 0) {
+      const y0 = yScale(0)
+      g.append('line')
+        .attr('x1', 0).attr('x2', W).attr('y1', y0).attr('y2', y0)
+        .attr('stroke', '#252B3A').attr('stroke-dasharray', '4,3').attr('stroke-width', 1)
+    }
+
+    // Tick values that won't crowd the chart's own top/bottom edge
+    const tickCount = H < 90 ? 3 : 5
+    const EDGE_MARGIN = 8
+    const rawTicks = yScale.ticks(tickCount)
+    const yTickValues = rawTicks.filter(v => {
+      const py = yScale(v)
+      return py > EDGE_MARGIN && py < H - EDGE_MARGIN
+    })
+    if (!yTickValues.length) yTickValues.push(...rawTicks)
+
+    // Grid lines
+    g.append('g')
+      .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(-W).tickFormat(''))
+      .call(ax => ax.select('.domain').remove())
+      .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-width', 1))
+
+    // Line — gaps stay gaps, so instrument saturation reads honestly
+    const line = d3.line()
+      .defined(d => d[param.key] != null)
+      .x(d => xScale(d.t))
+      .y(d => yScale(d[param.key]))
+      .curve(d3.curveLinear)
+
+    g.append('path')
+      .datum(parsed)
+      .attr('fill', 'none')
+      .attr('stroke', param.color)
+      .attr('stroke-width', 1.5)
+      .attr('d', line)
+
+    // Selection strip: ISO timestamps lassoed in Phase Space
+    if (selectedPoints?.length) {
+      const selSet = new Set(selectedPoints)
+      parsed.forEach(d => {
+        if (!selSet.has(d.datetime)) return
+        const px = xScale(d.t)
+        g.append('line')
+          .attr('x1', px).attr('x2', px)
+          .attr('y1', H - 6).attr('y2', H)
+          .attr('stroke', '#8b5cf6').attr('stroke-width', 1.5)
+      })
+    }
+
+    const hoverCircle = g.append('circle')
+      .attr('r', 5)
+      .attr('fill', param.color)
+      .attr('stroke', '#E7EAF0')
+      .attr('stroke-width', 1.5)
+      .style('display', 'none')
+
+    // Y axis ticks — dimmed so the data line stays the brightest pixels
+    g.append('g')
+      .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(4))
+      .call(ax => ax.select('.domain').remove())
       .call(ax => ax.selectAll('.tick line').attr('stroke', '#252B3A'))
+      .call(ax => ax.selectAll('.tick text')
+        .attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 9).attr('dx', -2))
+
+    // Shared X axis
+    svg.append('g')
+      .attr('transform', `translate(${MARGIN.left},${MARGIN.top + H})`)
+      .call(d3.axisBottom(xScale).ticks(Math.max(3, Math.round(W / 110))))
+      .call(ax => ax.select('.domain').attr('stroke', '#1E2330'))
+      .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330'))
       .call(ax => ax.selectAll('.tick text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 10))
-    //--------------------------------------------------
-    // Hover Layer
-    //--------------------------------------------------
 
     //--------------------------------------------------
-    // Selection
+    // Drag-to-set-range + local hover tooltip
     //--------------------------------------------------
 
     let selecting = false
     let startX = 0
 
-    const selectionRect = svg.append("rect")
-        .attr("display", "none")
-        .attr("fill", "rgba(139,92,246,0.20)")
-        .attr("stroke", "#8b5cf6")
-        .attr("stroke-width", 2)
-
-    const hoverLine = svg.append('line')
-      .attr('y1', MARGIN.top)
-      .attr('y2', xAxisY)
-      .attr('stroke', '#7C8496')
-      .attr('stroke-width', 1)
-      .attr('stroke-dasharray', '4,3')
-      .style('display', 'none')
+    const selectionRect = svg.append('rect')
+      .attr('display', 'none')
+      .attr('fill', 'rgba(139,92,246,0.20)')
+      .attr('stroke', '#8b5cf6')
+      .attr('stroke-width', 2)
 
     const tooltip = d3.select(wrapRef.current)
       .append('div')
@@ -196,106 +178,58 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
       .style('color', '#E7EAF0')
       .style('opacity', 0)
 
-    // Persistent band showing the shared selection (drawn by the selection effect)
-    const persistBand = svg.append("rect")
-        .attr("y", MARGIN.top)
-        .attr("height", xAxisY - MARGIN.top)
-        .attr("fill", "rgba(139,92,246,0.12)")
-        .attr("stroke", "#8b5cf6")
-        .attr("stroke-dasharray", "3,3")
-        .style("display", "none")
+    svg.append('rect')
+      .attr('x', MARGIN.left)
+      .attr('y', MARGIN.top)
+      .attr('width', W)
+      .attr('height', H)
+      .attr('fill', 'transparent')
+      .style('cursor', 'crosshair')
 
-      svg.append("rect")
-      .attr("x", MARGIN.left)
-      .attr("y", MARGIN.top)
-      .attr("width", W)
-      .attr("height", xAxisY - MARGIN.top)
-      .attr("fill", "transparent")
-      .style("cursor", "crosshair")
-      
-      .on("mousedown", function(event){
+      .on('mousedown', function (event) {
+        selecting = true
+        startX = d3.pointer(event, this)[0]
+        selectionRect
+          .attr('display', null)
+          .attr('x', startX).attr('y', MARGIN.top)
+          .attr('width', 0).attr('height', H)
+      })
 
-      selecting = true
-
-      startX = d3.pointer(event, this)[0]
-
-      selectionRect
-
-          .attr("display", null)
-
-          .attr("x", startX)
-
-          .attr("y", MARGIN.top)
-
-          .attr("width", 0)
-
-          .attr("height", xAxisY - MARGIN.top)
-
-  })
-
-      .on("mousemove", function(event){
-
+      .on('mousemove', function (event) {
         const [mx] = d3.pointer(event, this)
 
-        if(selecting){
-
-            selectionRect
-
-                .attr("x", Math.min(startX, mx))
-
-                .attr("width", Math.abs(mx - startX))
-
-            return
+        if (selecting) {
+          selectionRect.attr('x', Math.min(startX, mx)).attr('width', Math.abs(mx - startX))
+          return
         }
 
-
-        const x = mx - MARGIN.left
-
-        const date = xScale.invert(x)
-
-        const idx = bisectDate(parsed, date)
-
-        const d = parsed[idx]
-
+        const date = xScale.invert(mx)
+        const d = parsed[bisectDate(parsed, date)]
         if (!d) return
 
-        // cursor line + circles are drawn by the shared hoverTime effect below
-        setHoverTime(d.t)
+        const value = d[param.key]
+        if (value == null) {
+          hoverCircle.style('display', 'none')
+        } else {
+          hoverCircle.style('display', null).attr('cx', xScale(d.t)).attr('cy', yScale(value))
+        }
 
         tooltip
-        .style("opacity", 1)
-        .html(`
-          <div style="font-weight:600;margin-bottom:6px;">
-            ${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
-          </div>
+          .style('opacity', 1)
+          .html(`
+            <div style="font-weight:600;margin-bottom:6px;">
+              ${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+            </div>
+            <hr style="border-color:#252B3A;margin:4px 0"/>
+            Speed : ${d.flow_speed_kms?.toFixed(1) ?? '--'} km/s<br/>
+            Density : ${d.proton_density_ncc?.toFixed(2) ?? '--'} n/cc<br/>
+            Bz : ${d.bz_gsm_nT?.toFixed(2) ?? '--'} nT<br/>
+            Pdyn : ${d.pdyn_computed_nPa?.toFixed(2) ?? '--'} nPa<br/>
+            Kp : ${d.kp ?? '--'} · Dst : ${d.dst_omni ?? '--'} nT<br/>
+            <b>Storm</b> : ${d.storm_flag ? '🔴 Yes' : '🟢 No'}
+          `)
 
-          <hr style="border-color:#252B3A;margin:4px 0"/>
-
-          <b>Solar Wind</b><br/>
-          Speed : ${d.flow_speed_kms?.toFixed(1) ?? "--"} km/s<br/>
-          Density : ${d.proton_density_ncc?.toFixed(2) ?? "--"} n/cc<br/>
-          Pressure : ${d.pdyn_computed_nPa?.toFixed(2) ?? "--"} nPa<br/>
-
-          <br/>
-
-          <b>Magnetic Field</b><br/>
-          Bz : ${d.bz_gsm_nT?.toFixed(2) ?? "--"} nT<br/>
-
-          <br/>
-
-          <b>Geomagnetic</b><br/>
-          Kp : ${d.kp ?? "--"}<br/>
-          Dst : ${d.dst_omni ?? "--"} nT<br/>
-
-          <br/>
-
-          <b>Storm</b> :
-          ${d.storm_flag ? "🔴 Yes" : "🟢 No"}
-
-        `)
-
-        // Clamp so the tooltip never gets cut off by the panel's own
-        // overflow-hidden — flip to the other side of the cursor instead.
+        // Clamp so the tooltip never gets cut off by the panel's own overflow-hidden
         const wrapEl = wrapRef.current
         const node = tooltip.node()
         const tw = node.offsetWidth, th = node.offsetHeight
@@ -305,210 +239,54 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
         if (left < 4) left = 4
         if (top < 4) top = event.offsetY + 16
         if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
-        tooltip.style("left", `${left}px`).style("top", `${top}px`)
-
+        tooltip.style('left', `${left}px`).style('top', `${top}px`)
       })
 
-      .on("mouseout", () => {
+      .on('mouseout', () => {
+        hoverCircle.style('display', 'none')
+        tooltip.style('opacity', 0)
+      })
 
-        setHoverTime(null)
+    d3.select(window).on('mouseup.v1', () => {
+      if (!selecting) return
+      selecting = false
 
-        tooltip.style("opacity", 0)
+      const rx = +selectionRect.attr('x')
+      const rw = +selectionRect.attr('width')
 
-    })
-
-      .on("dblclick", () => {
-
-        setSelection(null)
-
-    })
-
-    d3.select(window)
-
-    .on("mouseup.v1", ()=>{
-
-        if(!selecting) return
-
-        selecting = false
-
-        const x = +selectionRect.attr("x")
-        const w = +selectionRect.attr("width")
-
-        if(w > 5){
-
-            const startDate = xScale.invert(x - MARGIN.left)
-            const endDate = xScale.invert(x + w - MARGIN.left)
-
-            setDraftStart(
-                d3.timeFormat("%Y-%m-%d")(startDate)
-            )
-
-            setDraftEnd(
-                d3.timeFormat("%Y-%m-%d")(endDate)
-            )
-
-            setSelection([startDate, endDate])
-
-        }
-
-        selectionRect.attr("display","none")
-
-    })
-    //--------------------------------------------------
-    // Brush
-    //--------------------------------------------------
-
-    // const brush = d3.brushX()
-
-    //   .extent([
-    //       [MARGIN.left, MARGIN.top],
-    //       [MARGIN.left + W, xAxisY]
-    //   ])
-
-    //   .on("end", (event) => {
-
-    //       if (!event.selection) return
-
-    //       const [x0, x1] = event.selection
-
-    //       const startDate = xScale.invert(x0 - MARGIN.left)
-    //       const endDate   = xScale.invert(x1 - MARGIN.left)
-
-    //       setDraftStart(
-    //           d3.timeFormat("%Y-%m-%d")(startDate)
-    //       )
-
-    //       setDraftEnd(
-    //           d3.timeFormat("%Y-%m-%d")(endDate)
-    //       )
-
-    //       brushGroup.call(brush.move, null)
-
-    //   })
-
-    // const brushGroup = svg.append("g")
-
-    //     .attr("class","brush")
-
-    //     .call(brush)
-
-    chartRef.current = { xScale, parsed, bisectDate, panelInfo, hoverLine, persistBand }
-
-    return ()=>{
-
-    d3.select(window)
-
-        .on("mouseup.v1", null)
-
-}
-
-  }, [data, sizeTick, setDraftStart, setDraftEnd, setHoverTime, setSelection])
-
-  //--------------------------------------------------
-  // Linked hover — cursor driven by shared hoverTime
-  // (set here, in V2 or in V3)
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const c = chartRef.current
-    if (!c) return
-
-    const { xScale, parsed, bisectDate, panelInfo, hoverLine } = c
-
-    const hide = () => {
-      hoverLine.style("display", "none")
-      panelInfo.forEach(p => p.hoverCircle.style("display", "none"))
-    }
-
-    if (!hoverTime || !parsed.length) return hide()
-
-    const [d0, d1] = xScale.domain()
-    if (hoverTime < d0 || hoverTime > d1) return hide()
-
-    const d = parsed[bisectDate(parsed, hoverTime)]
-    if (!d) return hide()
-
-    const cx = MARGIN.left + xScale(d.t)
-
-    hoverLine
-      .style("display", null)
-      .attr("x1", cx)
-      .attr("x2", cx)
-
-    panelInfo.forEach(p => {
-
-      const value = d[p.panel.key]
-
-      if (value == null) {
-        p.hoverCircle.style("display", "none")
-        return
+      if (rw > 5) {
+        const startDate = xScale.invert(rx - MARGIN.left)
+        const endDate = xScale.invert(rx + rw - MARGIN.left)
+        setDraftStart(d3.timeFormat('%Y-%m-%d')(startDate))
+        setDraftEnd(d3.timeFormat('%Y-%m-%d')(endDate))
       }
 
-      p.hoverCircle
-        .style("display", null)
-        .attr("cx", xScale(d.t))
-        .attr("cy", p.yScale(value))
-
+      selectionRect.attr('display', 'none')
     })
 
-  }, [hoverTime, data])
-
-  //--------------------------------------------------
-  // Linked selection — persistent band for the
-  // shared brushed range
-  //--------------------------------------------------
-
-  useEffect(() => {
-
-    const c = chartRef.current
-    if (!c) return
-
-    const { xScale, persistBand } = c
-
-    // note: never return the d3 selection from the effect — React would
-    // treat it as a cleanup function and crash
-    if (!selection) {
-      persistBand.style("display", "none")
-      return
+    return () => {
+      d3.select(window).on('mouseup.v1', null)
     }
 
-    const [d0, d1] = xScale.domain()
-    const s = Math.max(selection[0], d0)
-    const e = Math.min(selection[1], d1)
-
-    if (e <= s) {
-      persistBand.style("display", "none")
-      return
-    }
-
-    persistBand
-      .style("display", null)
-      .attr("x", MARGIN.left + xScale(s))
-      .attr("width", xScale(e) - xScale(s))
-
-  }, [selection, data])
+  }, [data, activeParam, selectedPoints, sizeTick, setDraftStart, setDraftEnd])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      {/* Panel header with unified series legend */}
+      {/* Panel header */}
       <div
-        className="flex-none flex items-center flex-wrap gap-x-2 gap-y-0.5 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60"
-        title="Drag to select a range · double-click to clear · hover syncs all panels"
+        className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60"
+        title="Drag to set Start/End · violet ticks = points lassoed in Phase Space"
       >
-        <span className="text-sm font-semibold text-space-text">Solar Wind Parameters</span>
-        <div className="flex items-center flex-wrap gap-x-2.5 gap-y-0.5 ml-auto font-mono">
-          {PANELS.map(p => (
-            <span key={p.key} title={`${p.label} (${p.unit})`} className="flex items-center gap-1 text-[10px] text-space-dim whitespace-nowrap">
-              <span className="inline-block w-2 h-2 rounded-full" style={{ background: p.color }} />
-              {p.label}
-            </span>
+        <span className="text-sm font-semibold text-space-text">Time Series</span>
+        <select
+          value={activeParam}
+          onChange={e => setActiveParam(e.target.value)}
+          className="ml-auto bg-space-panel-2 border border-space-hairline rounded px-2 py-0.5 text-[10px] font-mono text-space-dim"
+        >
+          {PARAMS.map(p => (
+            <option key={p.key} value={p.key}>{p.label} ({p.unit})</option>
           ))}
-          <span className="flex items-center gap-1 text-[10px] text-space-dim whitespace-nowrap">
-            <span className="inline-block w-2 h-2 rounded-sm" style={{ background: 'rgba(168,85,247,0.55)' }} />
-            Storm
-          </span>
-        </div>
+        </select>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
