@@ -1,31 +1,34 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
-// Small multiples: every parameter stacked on one shared time axis instead of
-// a single chart you flip through via a dropdown — storms are caused by a
-// *sequence* (speed jumps, then Bz turns negative, then Dst crashes a few
-// hours later), and that sequence only reads clearly when every line lines
-// up on the same x-axis at once.
+// Small multiples: the three parameters that tell the storm story, stacked
+// on one shared time axis — Speed (the solar wind driver arriving), Bz (the
+// southward turning that lets energy couple in), Dst (the geomagnetic
+// response). That cause → coupling → effect sequence only reads clearly when
+// the lines line up on the same x-axis. The other parameters (Density, Pdyn,
+// Temp) still appear in the hover tooltip and in Phase Space/Spectrogram.
 const ROWS = [
-  { key: 'flow_speed_kms',     label: 'Speed',   unit: 'km/s', color: '#4ade80' },
-  { key: 'proton_density_ncc', label: 'Density', unit: 'n/cc', color: '#60a5fa' },
-  { key: 'bz_gsm_nT',          label: 'Bz',      unit: 'nT',   color: '#f87171', zeroline: true },
-  { key: 'pdyn_computed_nPa',  label: 'Pdyn',    unit: 'nPa',  color: '#fbbf24' },
-  { key: 'dst_omni',           label: 'Dst',     unit: 'nT',   color: '#38bdf8', zeroline: true },
-  { key: 'proton_temp_K',      label: 'Temp',    unit: 'K',    color: '#f472b6' },
+  { key: 'flow_speed_kms', label: 'Speed', unit: 'km/s', color: '#4ade80' },
+  { key: 'bz_gsm_nT',      label: 'Bz',    unit: 'nT',   color: '#f87171', zeroline: true },
+  { key: 'dst_omni',       label: 'Dst',   unit: 'nT',   color: '#38bdf8', zeroline: true },
 ]
 
 const MARGIN = { top: 10, right: 20, bottom: 36, left: 60 }
-const ROW_GAP = 14
+// Wide gap + per-row backgrounds/borders so each parameter reads as its own
+// mini-chart, not three lines floating in one tall panel.
+const ROW_GAP = 30
 
 // Both /api/data and /api/orbital/storms represent the same UTC instants,
 // just formatted differently — compare as plain ISO strings, never via
 // `new Date()` (documented timezone-string-family gotcha for this project).
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
-export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, selectedStorm }) {
+export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
+  // Playback cursor: {xScale, line} written by the main draw, moved by a
+  // tiny effect on `playhead` — so each tick never triggers a full redraw.
+  const playRef = useRef(null)
 
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
@@ -61,55 +64,35 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
       .domain(d3.extent(parsed, d => d.t))
       .range([0, W])
 
-    // Detect contiguous storm intervals once — track raw datetime strings too
-    // (not just parsed Date objects) so a run can be matched against
-    // `selectedStorm` the same way V3 matches it against `stormCatalog`.
+    // Detect contiguous storm_flag intervals once (generic violet shading).
     const stormIntervals = []
-    let inStorm = false, stormStart = null, stormStartRaw = null
+    let inStorm = false, stormStart = null
     parsed.forEach((d, i) => {
-      if (d.storm_flag && !inStorm) { inStorm = true; stormStart = d.t; stormStartRaw = d.datetime }
+      if (d.storm_flag && !inStorm) { inStorm = true; stormStart = d.t }
       if (!d.storm_flag && inStorm) {
-        stormIntervals.push([stormStart, parsed[i - 1].t, stormStartRaw, parsed[i - 1].datetime])
+        stormIntervals.push([stormStart, parsed[i - 1].t])
         inStorm = false
       }
     })
-    if (inStorm) stormIntervals.push([stormStart, parsed[parsed.length - 1].t, stormStartRaw, parsed[parsed.length - 1].datetime])
+    if (inStorm) stormIntervals.push([stormStart, parsed[parsed.length - 1].t])
 
     const g = svg.append('g').attr('transform', `translate(${MARGIN.left},${MARGIN.top})`)
 
-    // Panel background spanning the whole stack
-    g.append('rect').attr('width', W).attr('height', H).attr('fill', '#0E1117').attr('rx', 3)
-
-    // Storm shading — violet, spans the full stack so a storm's alignment
-    // across every parameter is visible at a glance, not just in one row.
-    // The interval matching the globally selected storm (if any) gets a
-    // stronger fill + solid teal outline so picking a storm elsewhere
-    // visibly sticks here too, not just in Storm Analysis/Orbital Sim.
-    stormIntervals.forEach(([s, e, raw0, raw1]) => {
-      const isSelected = selectedStorm && stripZ(selectedStorm.start) <= raw1 && stripZ(selectedStorm.end) >= raw0
-      const x = xScale(s), w = Math.max(1, xScale(e) - xScale(s))
-      g.append('rect')
-        .attr('x', x).attr('y', 0)
-        .attr('width', w).attr('height', H)
-        .attr('fill', isSelected ? 'rgba(67,217,200,0.22)' : 'rgba(168,85,247,0.14)')
-        .attr('stroke', isSelected ? '#43D9C8' : 'none')
-        .attr('stroke-width', isSelected ? 1.5 : 0)
-    })
-
-    // Selection strip: ISO timestamps lassoed in Phase Space — thin lines
-    // spanning the full stack, so a lassoed cluster's timing reads against
-    // every parameter at once instead of just one row.
-    if (selectedPoints?.length) {
-      const selSet = new Set(selectedPoints)
-      parsed.forEach(d => {
-        if (!selSet.has(d.datetime)) return
-        const px = xScale(d.t)
-        g.append('line')
-          .attr('x1', px).attr('x2', px)
-          .attr('y1', 0).attr('y2', H)
-          .attr('stroke', '#8b5cf6').attr('stroke-width', 1).attr('stroke-opacity', 0.55)
-      })
+    // Selected-storm pixel interval, computed once — drawn per-row below.
+    // Taken directly from the catalog's own [start,end] (clipped to the
+    // visible window), NOT by matching against storm_flag runs: the two
+    // storm definitions don't always overlap, and requiring a match made a
+    // picked storm silently fail to highlight.
+    let selStormPx = null
+    if (selectedStorm) {
+      const selT0 = new Date(stripZ(selectedStorm.start))
+      const selT1 = new Date(stripZ(selectedStorm.end))
+      const [d0, d1] = xScale.domain()
+      if (selT1 >= d0 && selT0 <= d1) {
+        selStormPx = [xScale(selT0 < d0 ? d0 : selT0), xScale(selT1 > d1 ? d1 : selT1)]
+      }
     }
+    const selSet = new Set(selectedPoints ?? [])
 
     let totalNonNull = 0
     const rowRenders = []
@@ -117,6 +100,43 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
     ROWS.forEach((row, ri) => {
       const rowTop = ri * (CH_H + ROW_GAP)
       const rg = g.append('g').attr('transform', `translate(0,${rowTop})`)
+
+      // Own background + border per row, so each parameter reads as its own
+      // mini-chart instead of three lines floating in one tall panel.
+      rg.append('rect')
+        .attr('width', W).attr('height', CH_H)
+        .attr('fill', '#0E1117').attr('rx', 4)
+        .attr('stroke', '#1E2330').attr('stroke-width', 1)
+
+      // Storm shading — same x positions in every row, so alignment across
+      // parameters still reads while the gaps between rows stay clean.
+      stormIntervals.forEach(([s, e]) => {
+        rg.append('rect')
+          .attr('x', xScale(s)).attr('y', 0)
+          .attr('width', Math.max(1, xScale(e) - xScale(s))).attr('height', CH_H)
+          .attr('fill', 'rgba(168,85,247,0.14)')
+      })
+
+      // Selected-storm highlight (teal), per row.
+      if (selStormPx) {
+        rg.append('rect')
+          .attr('x', selStormPx[0]).attr('y', 0)
+          .attr('width', Math.max(2, selStormPx[1] - selStormPx[0])).attr('height', CH_H)
+          .attr('fill', 'rgba(67,217,200,0.16)')
+          .attr('stroke', '#43D9C8').attr('stroke-width', 1.5)
+      }
+
+      // Lasso-selection ticks (violet), per row.
+      if (selSet.size) {
+        parsed.forEach(d => {
+          if (!selSet.has(d.datetime)) return
+          const px = xScale(d.t)
+          rg.append('line')
+            .attr('x1', px).attr('x2', px)
+            .attr('y1', 0).attr('y2', CH_H)
+            .attr('stroke', '#8b5cf6').attr('stroke-width', 1).attr('stroke-opacity', 0.5)
+        })
+      }
 
       const vals = parsed.map(d => d[row.key]).filter(v => v != null)
       totalNonNull += vals.length
@@ -134,7 +154,7 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
 
       // Tick values that won't crowd this row's own top/bottom edge
       const EDGE_MARGIN = 6
-      const rawTicks = yScale.ticks(3)
+      const rawTicks = yScale.ticks(CH_H < 90 ? 3 : 5)
       const yTicks = rawTicks.filter(v => {
         const py = yScale(v)
         return py > EDGE_MARGIN && py < CH_H - EDGE_MARGIN
@@ -223,6 +243,13 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
       .attr('y1', 0).attr('y2', H)
       .attr('stroke', '#4B5265').attr('stroke-width', 1)
       .style('display', 'none')
+
+    // Playback cursor (orange, distinct from hover crosshair + selections)
+    const playLine = g.append('line')
+      .attr('y1', 0).attr('y2', H)
+      .attr('stroke', '#E8A33D').attr('stroke-width', 1.5)
+      .style('display', 'none')
+    playRef.current = { xScale, playLine }
 
     // Remove any tooltip left over from a prior run of this effect (resize,
     // new selection) — without this, a fresh div piles up on the DOM every
@@ -337,6 +364,17 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
 
   }, [data, selectedPoints, selectedStorm, sizeTick, setDraftStart, setDraftEnd])
 
+  // Move the playback cursor without re-running the (expensive) draw effect.
+  useEffect(() => {
+    const r = playRef.current
+    if (!r) return
+    if (!playhead) { r.playLine.style('display', 'none'); return }
+    const t = new Date(playhead)
+    const [d0, d1] = r.xScale.domain()
+    if (t < d0 || t > d1) { r.playLine.style('display', 'none'); return }
+    r.playLine.style('display', null).attr('x1', r.xScale(t)).attr('x2', r.xScale(t))
+  }, [playhead, sizeTick, data])
+
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
       {/* Panel header */}
@@ -345,13 +383,15 @@ export default function V1({ data, setDraftStart, setDraftEnd, selectedPoints, s
         title="Drag to set Start/End · violet ticks = points lassoed in Phase Space"
       >
         <span className="text-sm font-semibold text-space-text">Time Series</span>
-        <span className="ml-auto text-[10px] font-mono text-space-faint">Speed · Density · Bz · Pdyn · Dst · Temp</span>
+        <span className="ml-auto text-[10px] font-mono text-space-faint">Speed · Bz · Dst — hover for all parameters</span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
       <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
-          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
+          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">
+              {loading ? 'Loading…' : 'No records in this date range — adjust Date Range above.'}
+            </div>
           : <>
               <svg ref={svgRef} style={{ display: 'block' }} />
               {emptyAll && (

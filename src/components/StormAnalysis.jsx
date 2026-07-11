@@ -29,8 +29,21 @@ function buildPairs(series, lag) {
   return pairs
 }
 
-export default function StormAnalysis({ selectedStorm, compareStorm }) {
+export default function StormAnalysis({ selectedStorm, stormCatalog }) {
   const [lag, setLag] = useState(0)
+
+  // The comparison storm only affects this view, so it's local state with
+  // its own picker in the header — not a global filter.
+  const [cmpId, setCmpId] = useState('')
+  const compareStorm = useMemo(
+    () => (stormCatalog || []).find(s => String(s.id) === cmpId) || null,
+    [stormCatalog, cmpId],
+  )
+  const sortedCatalog = useMemo(() => {
+    const rank = { severe: 0, intense: 1, moderate: 2 }
+    return [...(stormCatalog || [])].sort((a, b) =>
+      (rank[a.intensity] ?? 3) - (rank[b.intensity] ?? 3) || a.peak_dst_nT - b.peak_dst_nT)
+  }, [stormCatalog])
 
   const { data: mainData, error: loadError } = useStormDetail(selectedStorm)
   const { data: cmpData } = useStormDetail(compareStorm)
@@ -367,9 +380,21 @@ export default function StormAnalysis({ selectedStorm, compareStorm }) {
         <span className="text-sm font-semibold text-space-text" title="Auto-detected shock arrival · compare two storms · lag slider drives a live Bz→Dst correlation">
           Storm Analysis
         </span>
-        <span className="ml-auto text-[10px] font-mono text-space-faint">
-          Pick storms from the <b className="text-space-dim">Storm</b> / <b className="text-space-dim">Compare</b> menus above
-        </span>
+        <div className="ml-auto flex items-center gap-2 font-mono text-[10px]">
+          <span className="text-space-faint">
+            Main storm: <b className="text-space-danger">⚠ jump control</b> above · compare vs
+          </span>
+          <select
+            value={cmpId}
+            onChange={e => setCmpId(e.target.value)}
+            className="h-6 max-w-56 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-dim text-[10px]"
+          >
+            <option value="">No comparison</option>
+            {sortedCatalog.map(s => (
+              <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · Dst {Math.round(s.peak_dst_nT)} nT</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {mainData && metrics && (
@@ -411,7 +436,7 @@ export default function StormAnalysis({ selectedStorm, compareStorm }) {
         {!mainData && (
           <div className="absolute inset-4 flex items-center justify-center bg-space-panel/80 rounded-lg pointer-events-none">
             <span className="text-space-faint text-xs font-mono text-center px-6 max-w-md">
-              {loadError ? `Could not load storm: ${loadError}` : 'Choose a storm above, or click a storm band in the Event Spectrogram.'}
+              {loadError ? `Could not load storm: ${loadError}` : 'Pick a storm from the ⚠ jump control above, use ◀ STORM / STORM ▶, or click a storm band in the Event Spectrogram.'}
             </span>
           </div>
         )}

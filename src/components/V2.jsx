@@ -19,9 +19,17 @@ const CHANNELS = [
   { key: 'kp',                short: 'Kp',  label: 'Kp',       kind: 'seq' },
 ]
 
-export default function V2({ data, selectedPoints, onSelectPoints }) {
+// Both /api/data and /api/orbital/storms represent the same UTC instants,
+// just formatted differently — compare as plain ISO strings, never via
+// `new Date()` (documented timezone-string-family gotcha for this project).
+const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
+
+export default function V2({ data, loading, selectedPoints, onSelectPoints, selectedStorm, playhead }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
+  // Playback cursor: {byTime, playDot} written by the main draw, moved by a
+  // tiny effect on `playhead` — no full redraw per tick.
+  const playRef = useRef(null)
 
   const [channel, setChannel] = useState('bz_gsm_nT')
   const [emptyData, setEmptyData] = useState(false)
@@ -55,6 +63,7 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
     const gridGroup   = plot.append('g')
     const axisGroup   = plot.append('g')
     const pointsGroup = plot.append('g').attr('clip-path', 'url(#scatterClip)')
+    const cursorGroup = plot.append('g').attr('clip-path', 'url(#scatterClip)')
     const lassoGroup  = plot.append('g')
 
     //--------------------------------------------------
@@ -178,13 +187,25 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
     const selSet = new Set(selectedPoints ?? [])
     const hasSel = selSet.size > 0
 
+    // Cross-highlight for the globally selected storm: its hours get a teal
+    // ring so a storm picked in the Spectrogram/Storm menu is visible here
+    // too. A lasso selection's white ring takes precedence when both apply.
+    const storm0 = selectedStorm ? stripZ(selectedStorm.start) : null
+    const storm1 = selectedStorm ? stripZ(selectedStorm.end) : null
+    const inStorm = d => storm0 != null && storm0 <= d.datetime && d.datetime <= storm1
+    const strokeFor = d => {
+      if (hasSel && selSet.has(d.datetime)) return '#E7EAF0'
+      if (inStorm(d)) return '#43D9C8'
+      return 'none'
+    }
+
     const dots = pointsGroup.selectAll('circle').data(parsed).enter().append('circle')
       .attr('cx', d => x(d.proton_density_ncc))
       .attr('cy', d => y(d.flow_speed_kms))
       .attr('r', 3.5)
       .attr('fill', d => d[ch.key] == null ? '#4B5265' : colorScale(d[ch.key]))
       .attr('fill-opacity', d => hasSel ? (selSet.has(d.datetime) ? 0.9 : 0.12) : 0.75)
-      .attr('stroke', d => hasSel && selSet.has(d.datetime) ? '#E7EAF0' : 'none')
+      .attr('stroke', strokeFor)
       .attr('stroke-width', 1)
 
     function positionTooltip(event) {
@@ -199,6 +220,16 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
       if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
       tooltip.style('left', `${left}px`).style('top', `${top}px`)
     }
+
+    // Playback cursor: a bright ring around the point for the current
+    // playhead hour (position lookup via map, moved by the effect below).
+    const byTime = new Map(parsed.map(d => [d.datetime, [x(d.proton_density_ncc), y(d.flow_speed_kms)]]))
+    const playDot = cursorGroup.append('circle')
+      .attr('r', 7)
+      .attr('fill', 'none')
+      .attr('stroke', '#E8A33D').attr('stroke-width', 2)
+      .style('display', 'none')
+    playRef.current = { byTime, playDot }
 
     dots.on('mouseover', function (event, d) {
       d3.select(this).transition().duration(100).attr('r', 6).attr('stroke', '#E7EAF0').attr('stroke-width', 1.5)
@@ -215,7 +246,8 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
       .on('mousemove', (event) => positionTooltip(event))
       .on('mouseout', function () {
         d3.select(this).transition().duration(100).attr('r', 3.5)
-          .attr('stroke', d => hasSel && selSet.has(d.datetime) ? '#E7EAF0' : 'none')
+          .attr('stroke', strokeFor)
+          .attr('stroke-width', 1)
         tooltip.style('opacity', 0)
       })
 
@@ -271,7 +303,15 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
       const [minY, maxY] = d3.extent(pts, p => p[1])
       const tooSmall = pts.length < 5 || (maxX - minX) * (maxY - minY) < 60
       if (tooSmall) {
-        if (onSelectPoints) onSelectPoints([])
+        // A plain click, not a lasso: if it landed on (or next to) a dot,
+        // select just that point; clicking empty space clears the selection.
+        const [px, py] = pts[0]
+        let best = null, bestD = 8
+        for (const d of parsed) {
+          const dist = Math.hypot(x(d.proton_density_ncc) - px, y(d.flow_speed_kms) - py)
+          if (dist < bestD) { bestD = dist; best = d }
+        }
+        if (onSelectPoints) onSelectPoints(best ? [best.datetime] : [])
         return
       }
       const inside = parsed
@@ -280,7 +320,20 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
       if (onSelectPoints) onSelectPoints(inside)
     })
 
-  }, [data, sizeTick, channel, selectedPoints, onSelectPoints])
+  }, [data, sizeTick, channel, selectedPoints, onSelectPoints, selectedStorm])
+
+  // Move the playback ring without re-running the draw effect. Falls back to
+  // the day's midnight row in daily resolution (hourly playhead timestamps
+  // only match T00:00:00 rows there).
+  useEffect(() => {
+    const r = playRef.current
+    if (!r) return
+    const pos = playhead
+      ? (r.byTime.get(playhead) ?? r.byTime.get(playhead.slice(0, 10) + 'T00:00:00'))
+      : null
+    if (!pos) { r.playDot.style('display', 'none'); return }
+    r.playDot.style('display', null).attr('cx', pos[0]).attr('cy', pos[1])
+  }, [playhead, sizeTick, data])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
@@ -295,6 +348,8 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
               <button
                 key={c.key}
                 onClick={() => setChannel(c.key)}
+                aria-label={`Color points by ${c.label}`}
+                title={`Color points by ${c.label}`}
                 className={`px-2 py-0.5 text-[10px] transition-colors ${
                   channel === c.key ? 'bg-space-violet text-white' : 'bg-space-panel-2 text-space-dim hover:text-space-text'
                 }`}
@@ -305,6 +360,7 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
           </div>
           <button
             onClick={() => onSelectPoints?.([])}
+            aria-label="Clear the lassoed selection"
             title="Clear the lassoed selection"
             className="px-2 py-0.5 text-[10px] rounded bg-space-panel-2 border border-space-hairline text-space-dim hover:text-space-text transition-colors"
           >
@@ -316,7 +372,9 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
       <div className="relative w-full flex-1 min-h-0 overflow-hidden">
         <div ref={wrapRef} className="absolute inset-0" style={{ cursor: 'crosshair' }}>
           {!data?.length
-            ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
+            ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">
+                {loading ? 'Loading…' : 'No records in this date range — adjust Date Range above.'}
+              </div>
             : <svg ref={svgRef} style={{ display: 'block' }} />
           }
         </div>

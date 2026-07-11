@@ -52,7 +52,7 @@ const MARGIN = { top: 8, right: 24, bottom: 36, left: 64 }
 // as local time and the other as UTC and silently shift them apart.
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
-export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, selectedStorm }) {
+export default function V3({ data, loading, selectedPoints, stormCatalog, onSelectStorm, selectedStorm, playhead }) {
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
   const svgRef       = useRef(null)
@@ -162,33 +162,42 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, 
       const x1 = MARGIN.left + xScale(t0), x2 = MARGIN.left + xScale(t1)
       const w = Math.max(1, x2 - x1)
 
-      // The currently selected storm (picked here, in the Storm menu, or via
-      // Storm Analysis) gets a stronger teal outline + faint fill instead of
-      // the plain red outline every other storm gets, so it visibly sticks
-      // out as "this is the one you're looking at" across panels.
-      const isSelected = selectedStorm && stripZ(selectedStorm.start) <= raw1 && stripZ(selectedStorm.end) >= raw0
-
       bandsG.append('rect')
         .attr('x', x1).attr('y', MARGIN.top)
         .attr('width', w).attr('height', chartH)
-        .attr('fill', isSelected ? 'rgba(67,217,200,0.30)' : 'none')
-        .attr('stroke', isSelected ? '#43D9C8' : 'rgba(239,68,68,0.55)')
-        .attr('stroke-width', isSelected ? 2.5 : 1.2)
+        .attr('fill', 'none')
+        .attr('stroke', 'rgba(239,68,68,0.55)')
+        .attr('stroke-width', 1.2)
 
-      // The heatmap's own colors can drown out a translucent overlay, so the
-      // selected storm also gets an unambiguous marker in the empty margin
-      // below the chart, independent of whatever's painted underneath it.
-      if (isSelected) {
-        const midX = x1 + w / 2
+      const match = stormCatalog?.find(s => stripZ(s.start) <= raw1 && stripZ(s.end) >= raw0)
+      if (match && onSelectStorm) clickableStorms.push({ x1, w, match })
+    })
+
+    // Selected-storm highlight — drawn directly from the catalog's own
+    // [start,end] interval (clipped to the visible window), NOT by matching
+    // against storm_flag runs — the two storm definitions don't always
+    // overlap, and requiring a match made a picked storm silently fail to
+    // highlight. A marker triangle in the margin below stays legible even
+    // where the heatmap's own colors would drown the translucent overlay.
+    if (selectedStorm) {
+      const selT0 = new Date(stripZ(selectedStorm.start))
+      const selT1 = new Date(stripZ(selectedStorm.end))
+      const [dom0, dom1] = xScale.domain()
+      if (selT1 >= dom0 && selT0 <= dom1) {
+        const px0 = MARGIN.left + xScale(selT0 < dom0 ? dom0 : selT0)
+        const px1 = MARGIN.left + xScale(selT1 > dom1 ? dom1 : selT1)
+        bandsG.append('rect')
+          .attr('x', px0).attr('y', MARGIN.top)
+          .attr('width', Math.max(2, px1 - px0)).attr('height', chartH)
+          .attr('fill', 'rgba(67,217,200,0.25)')
+          .attr('stroke', '#43D9C8').attr('stroke-width', 2)
+        const midX = (px0 + px1) / 2
         const markerY = MARGIN.top + chartH + 3
         bandsG.append('path')
           .attr('d', `M${midX - 5},${markerY} L${midX + 5},${markerY} L${midX},${markerY - 6} Z`)
           .attr('fill', '#43D9C8')
       }
-
-      const match = stormCatalog?.find(s => stripZ(s.start) <= raw1 && stripZ(s.end) >= raw0)
-      if (match && onSelectStorm) clickableStorms.push({ x1, w, match })
-    })
+    }
 
     // Chart border
     svg.append('rect')
@@ -204,7 +213,9 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, 
       .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330'))
       .call(ax => ax.selectAll('.tick text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 10))
 
-    // Selection strip: ISO timestamps lassoed in Phase Space
+    // Selection strip: ISO timestamps lassoed in Phase Space — full-height
+    // lines (matching Time Series), not 6px slivers at the very bottom that
+    // were easy to miss entirely against the busy heatmap.
     if (selectedPoints?.length) {
       const selSet = new Set(selectedPoints)
       const stripG = svg.append('g')
@@ -213,8 +224,8 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, 
         const px = MARGIN.left + xScale(d.t)
         stripG.append('line')
           .attr('x1', px).attr('x2', px)
-          .attr('y1', MARGIN.top + chartH - 6).attr('y2', MARGIN.top + chartH)
-          .attr('stroke', '#8b5cf6').attr('stroke-width', 1.5)
+          .attr('y1', MARGIN.top).attr('y2', MARGIN.top + chartH)
+          .attr('stroke', '#8b5cf6').attr('stroke-width', 1.2).attr('stroke-opacity', 0.8)
       })
     }
 
@@ -320,9 +331,27 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, 
         .text(`${match.intensity} storm · peak Dst ${match.peak_dst_nT} nT — click to open in Storm Analysis`)
     })
 
-    chartRef.current = { xScale }
+    // Playback cursor (orange) — moved by the small playhead effect below
+    // without re-running this whole draw.
+    const playLine = svg.append('line')
+      .attr('y1', MARGIN.top).attr('y2', MARGIN.top + chartH)
+      .attr('stroke', '#E8A33D').attr('stroke-width', 1.5)
+      .style('display', 'none')
+
+    chartRef.current = { xScale, playLine }
 
   }, [data, selectedPoints, stormCatalog, onSelectStorm, selectedStorm, sizeTick])
+
+  useEffect(() => {
+    const r = chartRef.current
+    if (!r?.playLine) return
+    if (!playhead) { r.playLine.style('display', 'none'); return }
+    const t = new Date(playhead)
+    const [d0, d1] = r.xScale.domain()
+    if (t < d0 || t > d1) { r.playLine.style('display', 'none'); return }
+    const px = MARGIN.left + r.xScale(t)
+    r.playLine.style('display', null).attr('x1', px).attr('x2', px)
+  }, [playhead, sizeTick, data])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
@@ -334,7 +363,9 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
       <div ref={containerRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
-          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
+          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">
+              {loading ? 'Loading…' : 'No records in this date range — adjust Date Range above.'}
+            </div>
           : <>
               <canvas ref={canvasRef} style={{ position: 'absolute' }} />
               <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'block' }} />

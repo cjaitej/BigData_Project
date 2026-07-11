@@ -79,12 +79,16 @@ const EARTH_SPECKLE = (() => {
   }))
 })()
 
-export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCatalog, visibleOrbits }) {
+export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
 
   const [day, setDay] = useState([])
   const [dayError, setDayError] = useState(null)
+
+  // Shell visibility is V5-local: it only affects this scene, so it lives in
+  // this view's own sidebar instead of the global filter bar.
+  const [visibleOrbits, setVisibleOrbits] = useState(() => new Set(ORBITS))
 
   // Fetch the sim day's hourly rows whenever the date changes.
   useEffect(() => {
@@ -353,7 +357,8 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
 
         <V5Sidebar
           simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour}
-          stormCatalog={stormCatalog} frame={frame}
+          frame={frame}
+          visibleOrbits={visibleOrbits} setVisibleOrbits={setVisibleOrbits}
         />
       </div>
     </div>
@@ -363,22 +368,11 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
 //--------------------------------------------------
 // Sidebar: controls + exact-value readout + exposure chips
 //--------------------------------------------------
-function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, stormCatalog, frame }) {
-  const sortedStorms = useMemo(() => {
-    const rank = { severe: 0, intense: 1, moderate: 2 }
-    return [...(stormCatalog || [])]
-      .sort((a, b) => (rank[a.intensity] ?? 3) - (rank[b.intensity] ?? 3) || a.peak_dst_nT - b.peak_dst_nT)
-      .slice(0, 12)
-  }, [stormCatalog])
-
-  function jumpToStorm(id) {
-    const s = sortedStorms.find(st => String(st.id) === id)
-    if (!s?.peak_time) return
-    const peak = s.peak_time.endsWith('Z') ? s.peak_time.slice(0, -1) : s.peak_time
-    setSimDate(peak.slice(0, 10))
-    setSimHour(Number(peak.slice(11, 13)))
-  }
-
+// The old per-view "jump to storm" select was removed — the global red
+// "⚠ JUMP TO STORM → ALL PANELS" control in the top bar covers it and also
+// updates every other panel, so a local one that only moved this snapshot
+// was confusing.
+function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, frame, visibleOrbits, setVisibleOrbits }) {
   return (
     <div className="flex-none w-64 flex flex-col gap-2 overflow-y-auto font-mono text-[11px]">
       {/* Controls */}
@@ -395,18 +389,25 @@ function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, stormCatalog, fra
             onChange={e => setSimHour(Number(e.target.value))}
             className="w-full accent-space-violet" />
         </label>
-        {sortedStorms.length > 0 && (
-          <select
-            defaultValue=""
-            onChange={e => { jumpToStorm(e.target.value); e.target.value = '' }}
-            className="bg-space-panel border border-space-hairline rounded px-1.5 py-1 text-space-dim text-[10px]"
-          >
-            <option value="">⚠ jump to storm…</option>
-            {sortedStorms.map(s => (
-              <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · {Math.round(s.peak_dst_nT)} nT</option>
+        <div className="pt-1 border-t border-space-hairline">
+          <div className="text-[9px] uppercase tracking-wider text-space-faint mb-1">Shells</div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {ORBITS.map(o => (
+              <label key={o} className="flex items-center gap-1 text-space-dim cursor-pointer whitespace-nowrap">
+                <input
+                  type="checkbox" checked={visibleOrbits.has(o)}
+                  onChange={() => setVisibleOrbits(prev => {
+                    const next = new Set(prev)
+                    next.has(o) ? next.delete(o) : next.add(o)
+                    return next
+                  })}
+                  className="accent-space-fast"
+                />
+                {o}
+              </label>
             ))}
-          </select>
-        )}
+          </div>
+        </div>
       </div>
 
       <ReadoutPanel frame={frame} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   parseISO,
   format,
@@ -13,7 +13,7 @@ import V5 from './components/V5'
 import StormAnalysis from './components/StormAnalysis'
 import Sidebar from './components/Sidebar'
 import MenuBar from './components/MenuBar'
-import { DEFAULT_FILTERS, DEFAULT_VISIBLE_ORBITS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
+import { DEFAULT_FILTERS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
 
 const DEFAULT_START = '2003-10-25'
 const DEFAULT_END   = '2003-11-10'
@@ -29,7 +29,7 @@ const MIN_RANGE_DAYS = 2
 // panel side by side, so nothing about picking a storm is duplicated.
 const SECTIONS = [
   { id: 'orbital',     title: 'Orbital Exposure Simulator',  description: 'LEO/Polar/MEO/GEO shells against the live magnetopause.' },
-  { id: 'timeseries',  title: 'Time Series',                description: 'Speed, density, Bz and Pdyn over time, storm periods shaded.' },
+  { id: 'timeseries',  title: 'Time Series',                description: 'Speed, Bz and Dst on one shared time axis, storm periods shaded.' },
   { id: 'phasespace',  title: 'Phase Space',                 description: 'Density vs. speed scatter; lasso to select, color by |B|/Bz/Kp.' },
   { id: 'spectrogram', title: 'Event Spectrogram',           description: 'Multi-parameter heatmap; click a storm band to inspect.' },
   { id: 'analysis',    title: 'Storm Analysis',              description: 'Shock-aligned storm comparison plus lagged Bz→Dst correlation.' },
@@ -57,48 +57,95 @@ export default function App() {
   // Linked-view state shared across panels.
   // selectedPoints: ISO timestamps lassoed in V2 — shown as tick marks in V1/V3.
   const [selectedPoints, setSelectedPoints] = useState([])
-  // selectedStorm: set by clicking a storm band in V3, or picking one in V4;
-  // simDate/simHour follow it so V5 can jump to the same moment (a one-way
-  // "documented deviation", not a two-way sync — V5 has its own controls too).
+  // selectedStorm: set by clicking a storm band in V3 or picking one in the
+  // Storm menu; simDate/simHour follow it so V5 can jump to the same moment
+  // (one-way — V5 has its own controls too). The comparison storm is NOT
+  // here: it only affects Storm Analysis, so it lives there as local state.
   const [selectedStorm, setSelectedStorm] = useState(null)
-  // compareStorm: the "Compare" menu's pick — an optional second storm
-  // overlaid (dashed) on Storm Analysis's charts. Independent of
-  // selectedStorm/simDate/simHour, which drive the primary storm everywhere.
-  const [compareStorm, setCompareStorm] = useState(null)
   const [simDate, setSimDate] = useState(DEFAULT_START)
   const [simHour, setSimHour] = useState(0)
 
   const [activeSection, setActiveSection] = useState('orbital')
 
   // Global filters — only Time Series/Phase Space/Event Spectrogram respect
-  // these (via `filteredData` below); Storm Comparison/Correlation/Orbital
-  // fetch their own independent windows and are untouched by design.
+  // these (via `filteredData` below); Storm Analysis/Orbital fetch their own
+  // independent windows and are untouched by design. Orbit-shell visibility
+  // is V5-local state, not a global filter.
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
-  const [visibleOrbits, setVisibleOrbits] = useState(new Set(DEFAULT_VISIBLE_ORBITS))
 
   const filteredData = useMemo(() => {
     const filtered = applyGlobalFilters(data, filters, stormCatalog)
     return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
   }, [data, filters, stormCatalog])
 
-  function resetFilters() {
-    setFilters(DEFAULT_FILTERS)
-    setVisibleOrbits(new Set(DEFAULT_VISIBLE_ORBITS))
-    setSelectedStorm(null)
-    setCompareStorm(null)
-    // Otherwise a stale lasso selection keeps showing as violet tick marks in
-    // Time Series/Event Spectrogram with nothing left that produced it.
-    setSelectedPoints([])
+  // Hourly↔daily switches change every row's timestamp format, which would
+  // orphan a lasso selection (chip stays, ticks vanish) — clear it instead.
+  useEffect(() => { setSelectedPoints([]) }, [filters.resolution])
+
+  //--------------------------------------------------
+  // Playback — sweeps a time cursor (playhead) hour by hour from the loaded
+  // window's start to its end. The cursor is drawn by V1/V2/V3 as a cheap
+  // overlay (no full d3 redraw per tick), and the Orbital Simulator's
+  // date/hour follow it, so "play" animates every panel together.
+  //--------------------------------------------------
+  const [playing, setPlaying] = useState(false)
+  const [playSpeed, setPlaySpeed] = useState(1)
+  const [playIdx, setPlayIdx] = useState(0)
+  const playIdxRef = useRef(0)
+  useEffect(() => { playIdxRef.current = playIdx }, [playIdx])
+
+  useEffect(() => {
+    if (!playing || !data.length) return
+    const id = setInterval(() => {
+      const next = playIdxRef.current + 1
+      if (next >= data.length) { setPlaying(false); return }
+      setPlayIdx(next)
+      const dt = data[next].datetime
+      setSimDate(dt.slice(0, 10))
+      setSimHour(Number(dt.slice(11, 13)))
+    }, Math.max(40, 350 / playSpeed))
+    return () => clearInterval(id)
+  }, [playing, playSpeed, data])
+
+  const playhead = (playing || playIdx > 0) ? (data[playIdx]?.datetime ?? null) : null
+
+  function togglePlay() {
+    if (!data.length) return
+    if (!playing && playIdx >= data.length - 1) setPlayIdx(0)  // replay from start
+    setPlaying(p => !p)
   }
 
-  // Picking a storm anywhere (V3 click, MenuBar's Storm/Compare menus, V5's
-  // own picker) drives this one path. Passive — no navigation — since a menu
-  // pick shouldn't yank the user off whatever view they're on.
+  function resetFilters() {
+    setFilters(DEFAULT_FILTERS)
+    setSelectedStorm(null)
+    setPlaying(false)
+    setPlayIdx(0)
+    // Restore the default date window too — after a storm jump reframed the
+    // window, a "Reset" that left the charts sitting on the storm's dates
+    // looked like it did nothing.
+    applyRange(DEFAULT_START, DEFAULT_END)
+    // applyRange already clears the lasso selection.
+  }
+
+  // Picking a storm anywhere (V3 click or the Storm menu) drives this one
+  // path. If the storm lies outside the loaded date window, the window is
+  // re-framed to cover it — otherwise Time Series/Phase Space/Spectrogram
+  // have nothing to highlight and the pick looks like it silently did
+  // nothing (the single biggest "selection doesn't reflect" complaint).
   const jumpToStorm = (storm) => {
     setSelectedStorm(storm)
     if (storm?.peak_time) {
       setSimDate(storm.peak_time.slice(0, 10))
       setSimHour(Number(storm.peak_time.slice(11, 13)))
+
+      const s0 = storm.start.slice(0, 10)
+      const s1 = storm.end.slice(0, 10)
+      if (s0 < start || s1 > end) {
+        applyRange(
+          format(subDays(parseISO(s0), 3), 'yyyy-MM-dd'),
+          format(addDays(parseISO(s1), 4), 'yyyy-MM-dd'),
+        )
+      }
     }
   }
 
@@ -110,16 +157,42 @@ export default function App() {
     setActiveSection('analysis')
   }
 
+  // ◀ STORM / STORM ▶ — step chronologically through the catalog (it's
+  // built in time order). Anchor on the selected storm, else on the loaded
+  // window's start, so stepping works even before anything is picked.
+  const stepStorm = (dir) => {
+    if (!stormCatalog.length) return
+    const anchor = selectedStorm ? selectedStorm.start.slice(0, 10) : start
+    const target = dir > 0
+      ? stormCatalog.find(s => s.start.slice(0, 10) > anchor)
+      : [...stormCatalog].reverse().find(s => s.start.slice(0, 10) < anchor)
+    if (target) jumpToStorm(target)
+  }
+
   // Every loaded-window change clears the lasso selection (points may fall
-  // outside the new window) but never touches selectedStorm/simDate/simHour —
-  // V4/V5 are intentionally decoupled from the header's date range.
+  // outside the new window) and rewinds/stops playback (the playhead indexes
+  // into the loaded rows) — but never touches selectedStorm/simDate/simHour.
   const applyRange = (newStart, newEnd) => {
     setStart(newStart)
     setEnd(newEnd)
     setDraftStart(newStart)
     setDraftEnd(newEnd)
     setSelectedPoints([])
+    setPlaying(false)
+    setPlayIdx(0)
   }
+
+  // Esc anywhere clears the most recent cross-view selection: the lasso
+  // first if one exists, otherwise the selected storm.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Escape') return
+      if (selectedPoints.length) setSelectedPoints([])
+      else if (selectedStorm) setSelectedStorm(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedPoints.length, selectedStorm])
 
   // True right after a V1 drag-to-select (or a manual edit in the Date
   // Range popover) until the user applies or discards it — drives the
@@ -224,15 +297,15 @@ const panRight = () => {
   function renderActiveSection() {
     switch (activeSection) {
       case 'timeseries':
-        return <V1 data={filteredData} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} />
+        return <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
       case 'phasespace':
-        return <V2 data={filteredData} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} />
+        return <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
       case 'spectrogram':
-        return <V3 data={filteredData} selectedPoints={selectedPoints} stormCatalog={stormCatalog} onSelectStorm={jumpToStormAndView} selectedStorm={selectedStorm} />
+        return <V3 data={filteredData} loading={loading} selectedPoints={selectedPoints} stormCatalog={stormCatalog} onSelectStorm={jumpToStormAndView} selectedStorm={selectedStorm} playhead={playhead} />
       case 'analysis':
-        return <StormAnalysis selectedStorm={selectedStorm} compareStorm={compareStorm} />
+        return <StormAnalysis selectedStorm={selectedStorm} stormCatalog={stormCatalog} />
       case 'orbital':
-        return <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} stormCatalog={stormCatalog} visibleOrbits={visibleOrbits} />
+        return <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
       default:
         return null
     }
@@ -277,13 +350,15 @@ const panRight = () => {
         <MenuBar
           filters={filters}
           setFilters={setFilters}
-          visibleOrbits={visibleOrbits}
-          setVisibleOrbits={setVisibleOrbits}
           stormCatalog={stormCatalog}
           selectedStorm={selectedStorm}
           onSelectStorm={jumpToStorm}
-          compareStorm={compareStorm}
-          onSelectCompareStorm={setCompareStorm}
+          playing={playing}
+          onTogglePlay={togglePlay}
+          playSpeed={playSpeed}
+          setPlaySpeed={setPlaySpeed}
+          onPrevStorm={() => stepStorm(-1)}
+          onNextStorm={() => stepStorm(1)}
           start={start}
           end={end}
           draftStart={draftStart}
@@ -327,6 +402,48 @@ const panRight = () => {
           >
             Discard
           </button>
+        </div>
+      )}
+
+      {/* Active cross-visual selections — always visible regardless of which
+          view is open, so a lasso or storm pick made in one view doesn't
+          become invisible state the moment you switch to another. */}
+      {(selectedStorm || selectedPoints.length > 0) && (
+        <div className="flex-none flex items-center justify-center gap-2 px-4 py-1.5 border-b border-space-hairline text-[11px] font-mono">
+          <span className="text-space-faint">Linked selections:</span>
+          {selectedStorm && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-fast/60 bg-space-fast/10 text-space-fast">
+              ⚡ {selectedStorm.start.slice(0, 10)} · {selectedStorm.intensity} storm
+              <button
+                onClick={() => setSelectedStorm(null)}
+                aria-label="Clear the selected storm"
+                title="Clear the selected storm"
+                className="hover:text-space-text leading-none"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+          {selectedPoints.length > 0 && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-violet/60 bg-space-violet/10 text-violet-300">
+              ◈ {selectedPoints.length} pts lassoed in Phase Space
+              <button
+                onClick={() => setSelectedPoints([])}
+                aria-label="Clear the lassoed points"
+                title="Clear the lassoed points"
+                className="hover:text-space-text leading-none"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+          <button
+            onClick={() => { setSelectedStorm(null); setSelectedPoints([]) }}
+            className="px-2 py-0.5 rounded border border-space-hairline text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
+          >
+            Clear all
+          </button>
+          <span className="text-space-faint hidden lg:inline">(or press Esc)</span>
         </div>
       )}
 

@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const SEVERITY_OPTIONS = [['quiet', 'Quiet'], ['moderate', 'Moderate'], ['intense', 'Intense'], ['severe', 'Severe']]
-const ORBITS = ['LEO', 'Polar', 'MEO', 'GEO']
 const PRESETS = [
   { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
   { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
 ]
 
-// Compact single-row menu bar: every control (date range, storm severity,
-// numeric ranges, satellite shells, resolution, comparison storm) lives
-// behind a labeled dropdown instead of being permanently unfolded — replaces
-// both the old FiltersBar and the header's date-range/pan-zoom/presets
-// controls, which moved into the "Date Range" menu here.
+const SPEEDS = [1, 2, 5, 10]
+
+// Compact single-row menu bar holding only the filters that affect MULTIPLE
+// views (date window, numeric ranges, resolution) plus the storm playback
+// cluster: play/pause + speed animate a time cursor through the loaded
+// window across every panel; ◀/▶ step between cataloged storms; the red
+// "jump to storm" select reframes + highlights everywhere. Single-view
+// controls live inside their own view instead (orbit shells → Orbital
+// sidebar, comparison storm → Storm Analysis header).
 export default function MenuBar({
-  filters, setFilters, visibleOrbits, setVisibleOrbits,
+  filters, setFilters,
   stormCatalog, selectedStorm, onSelectStorm,
-  compareStorm, onSelectCompareStorm,
+  playing, onTogglePlay, playSpeed, setPlaySpeed, onPrevStorm, onNextStorm,
   start, end, draftStart, draftEnd, setDraftStart, setDraftEnd, onApplyRange, loading,
   onPanLeft, onPanRight, onZoomIn, onZoomOut, onPreset,
   onReset,
@@ -52,13 +55,6 @@ export default function MenuBar({
   }
   function toggleSeverity(key) {
     setFilters(f => ({ ...f, severity: { ...f.severity, [key]: !f.severity[key] } }))
-  }
-  function toggleOrbit(o) {
-    setVisibleOrbits(prev => {
-      const next = new Set(prev)
-      next.has(o) ? next.delete(o) : next.add(o)
-      return next
-    })
   }
   function toggle(name) {
     setOpenMenu(m => (m === name ? null : name))
@@ -127,10 +123,78 @@ export default function MenuBar({
 
       <Divider />
 
-      <Menu label="Storm" name="storm" openMenu={openMenu} onToggle={toggle} width="w-64">
+      {/* Storm playback cluster — play/pause sweeps a live cursor from the
+          window's start to its end across every panel; ◀/▶ step through
+          cataloged storms chronologically; the red select jumps straight to
+          a storm and propagates to ALL panels. */}
+      <button
+        onClick={onTogglePlay}
+        aria-label={playing ? 'Pause playback' : 'Play through the loaded date range'}
+        title={playing ? 'Pause' : 'Play — sweep a live cursor through the loaded range in every panel'}
+        className={`h-8 w-12 flex items-center justify-center rounded-full text-sm font-bold transition-colors ${
+          playing ? 'bg-space-fast text-space-bg' : 'bg-space-panel-2 border border-space-fast text-space-fast hover:bg-space-fast hover:text-space-bg'
+        }`}
+      >
+        {playing ? '⏸' : '⏵'}
+      </button>
+
+      <button
+        onClick={onPrevStorm}
+        aria-label="Previous storm"
+        title="Jump to the previous cataloged storm"
+        className="h-8 px-2.5 flex items-center gap-1 rounded-lg border border-space-hairline bg-space-panel-2 text-space-dim hover:text-space-text hover:border-space-fast transition-colors text-[10px] tracking-wider"
+      >
+        ◀ STORM
+      </button>
+      <button
+        onClick={onNextStorm}
+        aria-label="Next storm"
+        title="Jump to the next cataloged storm"
+        className="h-8 px-2.5 flex items-center gap-1 rounded-lg border border-space-hairline bg-space-panel-2 text-space-dim hover:text-space-text hover:border-space-fast transition-colors text-[10px] tracking-wider"
+      >
+        STORM ▶
+      </button>
+
+      <select
+        value={playSpeed}
+        onChange={e => setPlaySpeed(Number(e.target.value))}
+        aria-label="Playback speed"
+        title="Playback speed"
+        className="h-8 rounded-lg bg-space-panel-2 border border-space-hairline px-1.5 text-space-dim text-[11px]"
+      >
+        {SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}
+      </select>
+
+      <select
+        value={selectedStorm ? String(selectedStorm.id) : ''}
+        onChange={e => {
+          const s = sortedCatalog.find(st => String(st.id) === e.target.value)
+          onSelectStorm(s || null)
+        }}
+        aria-label="Jump to storm — updates all panels"
+        title="Jump to a storm — loads its dates, highlights it in every chart, drives Storm Analysis + the Orbital Simulator"
+        className="h-8 max-w-64 rounded-lg bg-space-danger/10 border border-space-danger/60 px-2 text-space-danger text-[10px] tracking-wide"
+      >
+        <option value="">⚠ JUMP TO STORM → ALL PANELS</option>
+        {sortedCatalog.map(s => (
+          <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · Dst {Math.round(s.peak_dst_nT)} nT</option>
+        ))}
+      </select>
+
+      <Divider />
+
+      <Menu label="Solar Wind" name="wind" openMenu={openMenu} onToggle={toggle} width="w-64">
+        <div className="flex flex-col gap-2.5">
+          <RangeRow label="Speed" unit="km/s" value={filters.speed} onChange={(i, v) => updateRange('speed', i, v)} />
+          <RangeRow label="Density" unit="n/cc" value={filters.density} onChange={(i, v) => updateRange('density', i, v)} />
+          <RangeRow label="Bz" unit="nT" value={filters.bz} onChange={(i, v) => updateRange('bz', i, v)} />
+        </div>
+      </Menu>
+
+      <Menu label="Geomagnetic" name="geo" openMenu={openMenu} onToggle={toggle} width="w-64">
         <div className="flex flex-col gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-space-faint mb-1.5">Severity</div>
+            <div className="text-[10px] uppercase tracking-wider text-space-faint mb-1.5">Storm severity</div>
             <div className="flex flex-wrap gap-x-3 gap-y-1.5">
               {SEVERITY_OPTIONS.map(([k, label]) => (
                 <label key={k} className="flex items-center gap-1 text-space-dim cursor-pointer whitespace-nowrap">
@@ -140,56 +204,10 @@ export default function MenuBar({
               ))}
             </div>
           </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-space-faint mb-1.5">Event</div>
-            <select
-              value={selectedStorm ? String(selectedStorm.id) : ''}
-              onChange={e => {
-                const s = sortedCatalog.find(st => String(st.id) === e.target.value)
-                onSelectStorm(s || null)
-              }}
-              className="w-full h-7 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-dim text-[10px]"
-            >
-              <option value="">All Storms</option>
-              {sortedCatalog.map(s => (
-                <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · Dst {Math.round(s.peak_dst_nT)} nT</option>
-              ))}
-            </select>
+          <div className="flex flex-col gap-2.5">
+            <RangeRow label="Kp" value={filters.kp} onChange={(i, v) => updateRange('kp', i, v)} step={0.1} />
+            <RangeRow label="Dst" unit="nT" value={filters.dst} onChange={(i, v) => updateRange('dst', i, v)} />
           </div>
-        </div>
-      </Menu>
-
-      <Menu label="Solar Wind" name="wind" openMenu={openMenu} onToggle={toggle} width="w-64">
-        <div className="flex flex-col gap-2.5">
-          <RangeRow label="Speed" unit="km/s" value={filters.speed} onChange={(i, v) => updateRange('speed', i, v)} />
-          <RangeRow label="Density" unit="n/cc" value={filters.density} onChange={(i, v) => updateRange('density', i, v)} />
-          <RangeRow label="Pressure" unit="nPa" value={filters.pressure} onChange={(i, v) => updateRange('pressure', i, v)} />
-          <RangeRow label="Temperature" unit="K" value={filters.temp} onChange={(i, v) => updateRange('temp', i, v)} step={1000} />
-        </div>
-      </Menu>
-
-      <Menu label="Magnetic" name="magnetic" openMenu={openMenu} onToggle={toggle} width="w-64">
-        <div className="flex flex-col gap-2.5">
-          <RangeRow label="Bz" unit="nT" value={filters.bz} onChange={(i, v) => updateRange('bz', i, v)} />
-          <RangeRow label="|B|" unit="nT" value={filters.bmag} onChange={(i, v) => updateRange('bmag', i, v)} />
-        </div>
-      </Menu>
-
-      <Menu label="Geomagnetic" name="geo" openMenu={openMenu} onToggle={toggle} width="w-64">
-        <div className="flex flex-col gap-2.5">
-          <RangeRow label="Kp" value={filters.kp} onChange={(i, v) => updateRange('kp', i, v)} step={0.1} />
-          <RangeRow label="Dst" unit="nT" value={filters.dst} onChange={(i, v) => updateRange('dst', i, v)} />
-        </div>
-      </Menu>
-
-      <Menu label="Orbit" name="orbit" openMenu={openMenu} onToggle={toggle} width="w-52">
-        <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-          {ORBITS.map(o => (
-            <label key={o} className="flex items-center gap-1 text-space-dim cursor-pointer whitespace-nowrap">
-              <input type="checkbox" checked={visibleOrbits.has(o)} onChange={() => toggleOrbit(o)} className="accent-space-fast" />
-              {o}
-            </label>
-          ))}
         </div>
       </Menu>
 
@@ -201,22 +219,6 @@ export default function MenuBar({
         >
           <option value="hourly">Hourly</option>
           <option value="daily">Daily</option>
-        </select>
-      </Menu>
-
-      <Menu label="Compare" name="compare" openMenu={openMenu} onToggle={toggle} width="w-64">
-        <select
-          value={compareStorm ? String(compareStorm.id) : ''}
-          onChange={e => {
-            const s = sortedCatalog.find(st => String(st.id) === e.target.value)
-            onSelectCompareStorm(s || null)
-          }}
-          className="w-full h-7 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-dim text-[10px]"
-        >
-          <option value="">No comparison</option>
-          {sortedCatalog.map(s => (
-            <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · Dst {Math.round(s.peak_dst_nT)} nT</option>
-          ))}
         </select>
       </Menu>
 

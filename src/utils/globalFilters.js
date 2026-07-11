@@ -1,20 +1,18 @@
-// These defaults represent "no filtering active" — they match the full
-// plausible range of each field, so the very first render (before the user
-// touches anything) shows exactly the same data as before this feature.
+// These defaults represent "no filtering active" — deliberately WIDER than
+// anything in the 1995-2025 OMNI record, so the untouched state passes every
+// real value through. (The old defaults — speed [300,900], bz [-30,20] —
+// silently nulled the extreme values storms are about: Halloween 2003 speed
+// exceeded 1000 km/s and Bz dropped below -30 nT, and both vanished from the
+// charts while every filter LOOKED untouched.)
 export const DEFAULT_FILTERS = {
   severity: { quiet: true, moderate: true, intense: true, severe: true },
-  speed:    [300, 900],
-  density:  [0, 60],
-  pressure: [0, 20],
-  bz:       [-30, 20],
-  bmag:     [0, 40],
-  temp:     [0, 2000000],
+  speed:    [0, 2000],
+  density:  [0, 200],
+  bz:       [-100, 100],
   kp:       [0, 9],
-  dst:      [-500, 50],
+  dst:      [-700, 200],
   resolution: 'hourly',
 }
-
-export const DEFAULT_VISIBLE_ORBITS = ['LEO', 'Polar', 'MEO', 'GEO']
 
 // Both /api/data and /api/orbital/storms represent the same UTC instants,
 // just formatted differently — compare as plain strings, never via
@@ -29,15 +27,24 @@ export function rowSeverity(datetime, stormCatalog) {
   return 'quiet'
 }
 
+// Pressure/Temperature/|B| range filters were removed: Pdyn is derived from
+// speed+density (filtering it separately is redundant), and temp/|B| were
+// niche enough that they only added menu clutter. Severity-nulling below
+// still covers every plotted field, including those three.
 const RANGE_FIELDS = [
   ['flow_speed_kms',     'speed'],
   ['proton_density_ncc', 'density'],
-  ['pdyn_computed_nPa',  'pressure'],
   ['bz_gsm_nT',          'bz'],
-  ['imf_mag_scalar_nT',  'bmag'],
-  ['proton_temp_K',      'temp'],
   ['kp',                 'kp'],
   ['dst_omni',           'dst'],
+]
+
+// Every field any of the three filtered views actually plots — all of these
+// get nulled when a row's severity is unchecked, even the ones that no
+// longer have their own range filter (Pdyn/Temp/|B|).
+const PLOTTED_FIELDS = [
+  'flow_speed_kms', 'proton_density_ncc', 'bz_gsm_nT', 'kp', 'dst_omni',
+  'pdyn_computed_nPa', 'proton_temp_K', 'imf_mag_scalar_nT',
 ]
 
 // Keeps every row (same length/order/timestamps) so V1's line-chart gaps and
@@ -51,15 +58,22 @@ export function applyGlobalFilters(data, filters, stormCatalog) {
     const sev = rowSeverity(row.datetime, stormCatalog)
     const sevOk = filters.severity[sev] !== false
     const out = { ...row }
-    for (const [field, key] of RANGE_FIELDS) {
-      const [lo, hi] = filters[key]
-      const v = out[field]
-      if (!sevOk || v == null || v < lo || v > hi) out[field] = null
+    if (!sevOk) {
+      for (const field of PLOTTED_FIELDS) out[field] = null
+      // Also clear storm_flag itself, so V1/V3's storm shading (which reads
+      // storm_flag directly) doesn't keep drawing an intact-looking storm
+      // band over data that's just been nulled above.
+      out.storm_flag = 0
+      return out
     }
-    // Also clear storm_flag itself when severity is filtered out, so V1/V3's
-    // storm shading (which reads storm_flag directly) doesn't keep drawing an
-    // intact-looking storm band over data that's just been nulled above.
-    if (!sevOk) out.storm_flag = 0
+    for (const [field, key] of RANGE_FIELDS) {
+      // Normalize reversed bounds (user typed min > max) instead of silently
+      // nulling every value in the range's gap.
+      const lo = Math.min(filters[key][0], filters[key][1])
+      const hi = Math.max(filters[key][0], filters[key][1])
+      const v = out[field]
+      if (v == null || v < lo || v > hi) out[field] = null
+    }
     return out
   })
 }
