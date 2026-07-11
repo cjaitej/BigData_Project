@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   parseISO,
   format,
@@ -9,8 +9,11 @@ import {
 import V1 from './components/V1'
 import V2 from './components/V2'
 import V3 from './components/V3'
-import V4 from './components/V4'
 import V5 from './components/V5'
+import StormAnalysis from './components/StormAnalysis'
+import Sidebar from './components/Sidebar'
+import MenuBar from './components/MenuBar'
+import { DEFAULT_FILTERS, DEFAULT_VISIBLE_ORBITS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
 
 const DEFAULT_START = '2003-10-25'
 const DEFAULT_END   = '2003-11-10'
@@ -19,6 +22,18 @@ const DATASET_END   = parseISO("2025-12-31")
 
 const MAX_RANGE_DAYS = 365 * 2
 const MIN_RANGE_DAYS = 2
+
+// Storm Comparison and Bz→Dst Correlation were originally separate subpages
+// but are merged back into one ("Storm Analysis") — a shared storm picker
+// drives both the shock-aligned comparison charts and the lag-correlation
+// panel side by side, so nothing about picking a storm is duplicated.
+const SECTIONS = [
+  { id: 'orbital',     title: 'Orbital Exposure Simulator',  description: 'LEO/Polar/MEO/GEO shells against the live magnetopause.' },
+  { id: 'timeseries',  title: 'Time Series',                description: 'Speed, density, Bz and Pdyn over time, storm periods shaded.' },
+  { id: 'phasespace',  title: 'Phase Space',                 description: 'Density vs. speed scatter; lasso to select, color by |B|/Bz/Kp.' },
+  { id: 'spectrogram', title: 'Event Spectrogram',           description: 'Multi-parameter heatmap; click a storm band to inspect.' },
+  { id: 'analysis',    title: 'Storm Analysis',              description: 'Shock-aligned storm comparison plus lagged Bz→Dst correlation.' },
+]
 
 export default function App() {
   const [data, setData]         = useState([])
@@ -30,7 +45,7 @@ export default function App() {
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
   // Full storm catalog (id/peak_time/intensity/...) — fetched once, shared by
-  // V3 (click-to-select), V4 (storm + comparison pickers), V5 (quick-jump).
+  // V3 (click-to-select), Storm Comparison/Correlation (pickers), V5 (quick-jump).
   const [stormCatalog, setStormCatalog] = useState([])
   useEffect(() => {
     fetch('/api/orbital/storms')
@@ -46,16 +61,53 @@ export default function App() {
   // simDate/simHour follow it so V5 can jump to the same moment (a one-way
   // "documented deviation", not a two-way sync — V5 has its own controls too).
   const [selectedStorm, setSelectedStorm] = useState(null)
+  // compareStorm: the "Compare" menu's pick — an optional second storm
+  // overlaid (dashed) on Storm Analysis's charts. Independent of
+  // selectedStorm/simDate/simHour, which drive the primary storm everywhere.
+  const [compareStorm, setCompareStorm] = useState(null)
   const [simDate, setSimDate] = useState(DEFAULT_START)
   const [simHour, setSimHour] = useState(0)
 
-  // Picking a storm anywhere (V3 click or V4's picker) drives this one path.
+  const [activeSection, setActiveSection] = useState('orbital')
+
+  // Global filters — only Time Series/Phase Space/Event Spectrogram respect
+  // these (via `filteredData` below); Storm Comparison/Correlation/Orbital
+  // fetch their own independent windows and are untouched by design.
+  const [filters, setFilters] = useState(DEFAULT_FILTERS)
+  const [visibleOrbits, setVisibleOrbits] = useState(new Set(DEFAULT_VISIBLE_ORBITS))
+
+  const filteredData = useMemo(() => {
+    const filtered = applyGlobalFilters(data, filters, stormCatalog)
+    return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
+  }, [data, filters, stormCatalog])
+
+  function resetFilters() {
+    setFilters(DEFAULT_FILTERS)
+    setVisibleOrbits(new Set(DEFAULT_VISIBLE_ORBITS))
+    setSelectedStorm(null)
+    setCompareStorm(null)
+    // Otherwise a stale lasso selection keeps showing as violet tick marks in
+    // Time Series/Event Spectrogram with nothing left that produced it.
+    setSelectedPoints([])
+  }
+
+  // Picking a storm anywhere (V3 click, MenuBar's Storm/Compare menus, V5's
+  // own picker) drives this one path. Passive — no navigation — since a menu
+  // pick shouldn't yank the user off whatever view they're on.
   const jumpToStorm = (storm) => {
     setSelectedStorm(storm)
     if (storm?.peak_time) {
       setSimDate(storm.peak_time.slice(0, 10))
       setSimHour(Number(storm.peak_time.slice(11, 13)))
     }
+  }
+
+  // Clicking a storm band directly on a chart (Event Spectrogram) reads as
+  // an explicit "inspect this" gesture, unlike a passive menu pick — so this
+  // variant also drills through to the Storm Analysis view.
+  const jumpToStormAndView = (storm) => {
+    jumpToStorm(storm)
+    setActiveSection('analysis')
   }
 
   // Every loaded-window change clears the lasso selection (points may fall
@@ -68,6 +120,11 @@ export default function App() {
     setDraftEnd(newEnd)
     setSelectedPoints([])
   }
+
+  // True right after a V1 drag-to-select (or a manual edit in the Date
+  // Range popover) until the user applies or discards it — drives the
+  // pending-range banner below the top bar.
+  const hasPendingRange = draftStart !== start || draftEnd !== end
 
   const zoomIn = () => {
 
@@ -164,90 +221,34 @@ const panRight = () => {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  function renderActiveSection() {
+    switch (activeSection) {
+      case 'timeseries':
+        return <V1 data={filteredData} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} />
+      case 'phasespace':
+        return <V2 data={filteredData} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} />
+      case 'spectrogram':
+        return <V3 data={filteredData} selectedPoints={selectedPoints} stormCatalog={stormCatalog} onSelectStorm={jumpToStormAndView} selectedStorm={selectedStorm} />
+      case 'analysis':
+        return <StormAnalysis selectedStorm={selectedStorm} compareStorm={compareStorm} />
+      case 'orbital':
+        return <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} stormCatalog={stormCatalog} visibleOrbits={visibleOrbits} />
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-space-bg text-space-dim font-sans">
-      {/* Compact single-row header — one strict baseline, uniform control heights */}
-      <header className="flex-none border-b border-space-hairline bg-space-panel/90 px-4 py-2">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-sm font-bold text-space-text tracking-tight whitespace-nowrap leading-none">
+      {/* Header — title/branding + status only, its own row. */}
+      <header className="flex-none border-b border-space-hairline bg-space-panel/90 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-space-text tracking-tight whitespace-nowrap leading-none">
             Solar Wind &amp; Space Weather Analytics
-            <span className="hidden xl:inline ml-2 text-[10px] font-mono font-normal text-space-faint tracking-normal">
+            <span className="hidden xl:inline ml-3 text-xs font-mono font-normal text-space-faint tracking-normal">
               CS661 · Group 21 · NASA OMNI
             </span>
           </h1>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Date range controls */}
-          <div className="flex items-center gap-2 font-mono">
-            <label className="flex items-center gap-1.5 text-xs text-space-dim">
-              Start
-              <input
-                type="date"
-                value={draftStart}
-                min="1995-01-01"
-                max={draftEnd}
-                onChange={e => setDraftStart(e.target.value)}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
-              />
-            </label>
-            <label className="flex items-center gap-1.5 text-xs text-space-dim">
-              End
-              <input
-                type="date"
-                value={draftEnd}
-                min={draftStart}
-                onChange={e => setDraftEnd(e.target.value)}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
-              />
-            </label>
-            <button
-              onClick={() => applyRange(draftStart, draftEnd)}
-              disabled={loading}
-              className="h-6 px-3 rounded bg-space-violet hover:bg-violet-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
-            >
-              {loading ? 'Loading…' : 'Apply'}
-            </button>
-          </div>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Pan / zoom */}
-          <div className="flex items-center gap-1 font-mono">
-            {[
-              { label: '◀', fn: panLeft, hint: 'Pan left' },
-              { label: '−', fn: zoomOut, hint: 'Zoom out' },
-              { label: '+', fn: zoomIn, hint: 'Zoom in' },
-              { label: '▶', fn: panRight, hint: 'Pan right' },
-            ].map(b => (
-              <button
-                key={b.hint}
-                onClick={b.fn}
-                title={b.hint}
-                className="h-6 w-6 flex items-center justify-center rounded bg-space-panel-2 border border-space-hairline text-xs text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Quick presets */}
-          <div className="flex items-center gap-1 font-mono">
-            {[
-              { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
-              { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
-            ].map(p => (
-              <button
-                key={p.label}
-                onClick={() => applyRange(p.start, p.end)}
-                className="h-6 px-2 flex items-center rounded bg-space-panel-2 hover:bg-space-panel border border-space-hairline text-[10px] text-space-dim hover:text-space-text transition-colors"
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
 
           {/* Status */}
           <div className="ml-auto flex items-center gap-2 font-mono">
@@ -271,59 +272,70 @@ const panRight = () => {
         </div>
       </header>
 
+      {/* Global filters — their own row, centered as a group. */}
+      <div className="flex-none border-b border-space-hairline bg-space-panel/60 px-3 py-2 flex justify-center">
+        <MenuBar
+          filters={filters}
+          setFilters={setFilters}
+          visibleOrbits={visibleOrbits}
+          setVisibleOrbits={setVisibleOrbits}
+          stormCatalog={stormCatalog}
+          selectedStorm={selectedStorm}
+          onSelectStorm={jumpToStorm}
+          compareStorm={compareStorm}
+          onSelectCompareStorm={setCompareStorm}
+          start={start}
+          end={end}
+          draftStart={draftStart}
+          draftEnd={draftEnd}
+          setDraftStart={setDraftStart}
+          setDraftEnd={setDraftEnd}
+          onApplyRange={applyRange}
+          loading={loading}
+          onPanLeft={panLeft}
+          onPanRight={panRight}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onPreset={applyRange}
+          onReset={resetFilters}
+        />
+      </div>
+
       {/* Loading progress bar — fixed-height slot so paging doesn't shift the layout */}
       <div className="flex-none h-0.5 bg-transparent">
         {loading && <div className="h-full bg-space-violet animate-pulse" style={{ width: '60%' }} />}
       </div>
 
-      {/* Side-by-side: V5 (simulator + its own timeline/controls) on the left,
-          the four analytical panels stacked full-width on the right — both
-          stay visible at once, no toggling needed. V5's clock drives the
-          right side. */}
-      <main
-        className="flex-1 min-h-0 grid gap-2 px-2 pb-2"
-        style={{ gridTemplateColumns: 'minmax(0, 65fr) minmax(0, 35fr)' }}
-      >
-        <div className="min-h-0">
-          <V5
-            simDate={simDate}
-            simHour={simHour}
-            setSimDate={setSimDate}
-            setSimHour={setSimHour}
-            stormCatalog={stormCatalog}
-          />
+      {/* Pending-range banner — appears only after a V1 chart drag (or a
+          manual edit in the Date Range popover) hasn't been applied yet, so
+          that interaction has an immediate, visible next step instead of a
+          hidden one buried in the popover. */}
+      {hasPendingRange && (
+        <div className="flex-none flex items-center justify-center gap-3 px-4 py-1.5 bg-space-violet/10 border-b border-space-hairline text-xs font-mono">
+          <span className="text-space-dim">
+            Pending range from chart selection: <b className="text-space-text tabular-nums">{draftStart} → {draftEnd}</b>
+          </span>
+          <button
+            onClick={() => applyRange(draftStart, draftEnd)}
+            className="px-2.5 py-0.5 rounded bg-space-violet hover:bg-violet-500 text-white text-[11px] font-medium transition-colors"
+          >
+            Apply
+          </button>
+          <button
+            onClick={() => { setDraftStart(start); setDraftEnd(end) }}
+            className="px-2.5 py-0.5 rounded bg-space-panel-2 border border-space-hairline text-space-dim hover:text-space-text text-[11px] transition-colors"
+          >
+            Discard
+          </button>
         </div>
-        <div className="min-h-0 overflow-hidden grid grid-rows-4 gap-2">
-          <div className="min-h-0 overflow-hidden">
-            <V1
-              data={data}
-              setDraftStart={setDraftStart}
-              setDraftEnd={setDraftEnd}
-              selectedPoints={selectedPoints}
-            />
-          </div>
-          <div className="min-h-0 overflow-hidden">
-            <V3
-              data={data}
-              selectedPoints={selectedPoints}
-              stormCatalog={stormCatalog}
-              onSelectStorm={jumpToStorm}
-            />
-          </div>
-          <div className="min-h-0 overflow-hidden">
-            <V2
-              data={data}
-              selectedPoints={selectedPoints}
-              onSelectPoints={setSelectedPoints}
-            />
-          </div>
-          <div className="min-h-0 overflow-hidden">
-            <V4
-              stormCatalog={stormCatalog}
-              selectedStorm={selectedStorm}
-              onSelectStorm={jumpToStorm}
-            />
-          </div>
+      )}
+
+      {/* Sidebar of numbered subpages + a single full-space active view,
+          instead of all 5 panels crammed on screen at once. */}
+      <main className="flex-1 min-h-0 flex gap-3 px-3 pb-3 pt-3">
+        <Sidebar sections={SECTIONS} activeId={activeSection} onSelect={setActiveSection} />
+        <div className="flex-1 min-w-0 min-h-0">
+          {renderActiveSection()}
         </div>
       </main>
     </div>

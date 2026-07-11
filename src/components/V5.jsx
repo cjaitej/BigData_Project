@@ -79,11 +79,10 @@ const EARTH_SPECKLE = (() => {
   }))
 })()
 
-export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCatalog }) {
+export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCatalog, visibleOrbits }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
 
-  const [visibleOrbits, setVisibleOrbits] = useState(new Set(ORBITS))
   const [day, setDay] = useState([])
   const [dayError, setDayError] = useState(null)
 
@@ -131,6 +130,12 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
   useEffect(() => { frameRef.current = frame }, [frame])
   const visibleOrbitsRef = useRef(visibleOrbits)
   useEffect(() => { visibleOrbitsRef.current = visibleOrbits }, [visibleOrbits])
+
+  // Latest on-screen satellite positions, refreshed every draw() call so a
+  // plain DOM mousemove listener (outside the rAF loop) can hit-test them
+  // without re-deriving orbit geometry itself.
+  const satsRef = useRef([])
+  const [hoverSat, setHoverSat] = useState(null)
 
   // ---- canvas: sizing + the one continuous rAF loop (decorative motion
   // + the actual scene, both driven by frameRef so this effect never
@@ -244,6 +249,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
       drawShockRings(ctx, cx, cy, shockRings)
 
       // orbital shells + satellites
+      const frameSats = []
       for (const o of ORBITS) {
         if (!visibleOrbitsRef.current.has(o)) continue
         const R = RE[o] * pxRe
@@ -278,8 +284,10 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
             ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.2
             ctx.beginPath(); ctx.arc(sx, sy, 6.5, 0, 2 * Math.PI); ctx.stroke()
           }
+          frameSats.push({ x: sx, y: sy, orbit: o, lv, inside, score: F.noData ? null : F.scores[o] })
         }
       }
+      satsRef.current = frameSats
 
       legendChip(ctx, 12, H - 14, LEVEL_COLOR.safe, 'Safe')
       legendChip(ctx, 78, H - 14, LEVEL_COLOR.warn, 'Elevated')
@@ -287,7 +295,30 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
     }
 
     raf = requestAnimationFrame(loop)
-    return () => { disposed = true; cancelAnimationFrame(raf) }
+
+    // Satellite hover tooltip — a plain DOM listener outside the rAF loop,
+    // hit-testing against the positions draw() just refreshed in satsRef.
+    const HIT_R = 9
+    function handleMove(e) {
+      const rect = wrap.getBoundingClientRect()
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top
+      let nearest = null, bestD = HIT_R
+      for (const s of satsRef.current) {
+        const d = Math.hypot(s.x - mx, s.y - my)
+        if (d < bestD) { bestD = d; nearest = s }
+      }
+      setHoverSat(nearest ? { ...nearest, mx, my } : null)
+    }
+    function handleLeave() { setHoverSat(null) }
+    wrap.addEventListener('mousemove', handleMove)
+    wrap.addEventListener('mouseleave', handleLeave)
+
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+      wrap.removeEventListener('mousemove', handleMove)
+      wrap.removeEventListener('mouseleave', handleLeave)
+    }
   }, [])
 
   return (
@@ -308,11 +339,20 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
               Could not load {simDate}: {dayError}
             </div>
           )}
+          {hoverSat && (
+            <div
+              className="absolute z-10 pointer-events-none bg-space-panel border border-space-hairline rounded-md px-2 py-1 text-[10px] font-mono text-space-text shadow-lg whitespace-nowrap"
+              style={{ left: hoverSat.mx + 10, top: hoverSat.my - 10 }}
+            >
+              <b>{hoverSat.orbit}</b> satellite — <span style={{ color: LEVEL_COLOR[hoverSat.lv] }}>{LEVEL_TEXT[hoverSat.lv]}</span>
+              {hoverSat.score != null && <span className="text-space-faint"> · {hoverSat.score.toFixed(2)}</span>}
+              {!hoverSat.inside && <div className="text-space-danger">outside magnetopause</div>}
+            </div>
+          )}
         </div>
 
         <V5Sidebar
           simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour}
-          visibleOrbits={visibleOrbits} setVisibleOrbits={setVisibleOrbits}
           stormCatalog={stormCatalog} frame={frame}
         />
       </div>
@@ -323,21 +363,13 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour, stormCata
 //--------------------------------------------------
 // Sidebar: controls + exact-value readout + exposure chips
 //--------------------------------------------------
-function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, visibleOrbits, setVisibleOrbits, stormCatalog, frame }) {
+function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, stormCatalog, frame }) {
   const sortedStorms = useMemo(() => {
     const rank = { severe: 0, intense: 1, moderate: 2 }
     return [...(stormCatalog || [])]
       .sort((a, b) => (rank[a.intensity] ?? 3) - (rank[b.intensity] ?? 3) || a.peak_dst_nT - b.peak_dst_nT)
       .slice(0, 12)
   }, [stormCatalog])
-
-  function toggleOrbit(o) {
-    setVisibleOrbits(prev => {
-      const next = new Set(prev)
-      next.has(o) ? next.delete(o) : next.add(o)
-      return next
-    })
-  }
 
   function jumpToStorm(id) {
     const s = sortedStorms.find(st => String(st.id) === id)
@@ -363,14 +395,6 @@ function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, visibleOrbits, se
             onChange={e => setSimHour(Number(e.target.value))}
             className="w-full accent-space-violet" />
         </label>
-        <div className="flex items-center gap-3 flex-wrap text-space-faint text-[10px]">
-          {ORBITS.map(o => (
-            <label key={o} className="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={visibleOrbits.has(o)} onChange={() => toggleOrbit(o)} className="accent-space-fast" />
-              {o}
-            </label>
-          ))}
-        </div>
         {sortedStorms.length > 0 && (
           <select
             defaultValue=""

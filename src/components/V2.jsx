@@ -1,7 +1,15 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
-const MARGIN = { top: 16, right: 16, bottom: 40, left: 60 }
+// Marginal histograms (density along the top, speed along the side) show the
+// 1D distributions alongside the 2D relationship — the scatter alone hides
+// how lopsided either distribution is on its own.
+const TOP_HIST_H = 54
+const RIGHT_HIST_W = 54
+const HIST_GAP = 6
+const OUTER_PAD = 16
+
+const MARGIN = { top: OUTER_PAD + TOP_HIST_H + HIST_GAP, right: OUTER_PAD + RIGHT_HIST_W + HIST_GAP, bottom: 40, left: 60 }
 
 // Diverging (signed) vs sequential (magnitude) color channels — Bz keeps the
 // existing symmetric RdBu treatment, |B| and Kp are single-hue viridis.
@@ -16,6 +24,7 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
   const svgRef = useRef(null)
 
   const [channel, setChannel] = useState('bz_gsm_nT')
+  const [emptyData, setEmptyData] = useState(false)
 
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
@@ -54,6 +63,7 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
     const parsed = data.filter(d =>
       d.flow_speed_kms != null && d.proton_density_ncc != null && d.proton_density_ncc > 0
     ).map(d => ({ ...d, t: new Date(d.datetime) }))
+    setEmptyData(parsed.length === 0)
 
     const densityExt = d3.extent(parsed, d => d.proton_density_ncc)
     const x = d3.scaleLog()
@@ -64,6 +74,43 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
     const y = d3.scaleLinear()
       .domain([Math.max(150, (speedExt[0] ?? 250) - 30), (speedExt[1] ?? 900) + 30])
       .range([height, 0]).nice()
+
+    //--------------------------------------------------
+    // Marginal histograms — density along the top (binned in log-space so
+    // bar widths visually match the log x-axis), speed along the side
+    // (binned in linear space, matching the y-axis directly).
+    //--------------------------------------------------
+    const [dLo, dHi] = x.domain()
+    const logLo = Math.log10(dLo), logHi = Math.log10(dHi)
+    const nBinsX = 22
+    const densityThresholds = d3.range(nBinsX + 1).map(i => Math.pow(10, logLo + (i * (logHi - logLo)) / nBinsX))
+    const densityBins = d3.bin().domain(x.domain()).thresholds(densityThresholds)(parsed.map(d => d.proton_density_ncc))
+    const densityCount = d3.scaleLinear().domain([0, d3.max(densityBins, b => b.length) || 1]).range([TOP_HIST_H, 0])
+
+    const speedBins = d3.bin().domain(y.domain()).thresholds(y.ticks(20))(parsed.map(d => d.flow_speed_kms))
+    const speedCount = d3.scaleLinear().domain([0, d3.max(speedBins, b => b.length) || 1]).range([0, RIGHT_HIST_W])
+
+    const topHistG = svg.append('g').attr('transform', `translate(${MARGIN.left},${OUTER_PAD})`)
+    topHistG.append('line')
+      .attr('x1', 0).attr('x2', width).attr('y1', TOP_HIST_H).attr('y2', TOP_HIST_H)
+      .attr('stroke', '#1E2330')
+    topHistG.selectAll('rect').data(densityBins.filter(b => b.x1 > b.x0)).join('rect')
+      .attr('x', b => x(b.x0) + 1)
+      .attr('width', b => Math.max(0, x(b.x1) - x(b.x0) - 1))
+      .attr('y', b => densityCount(b.length))
+      .attr('height', b => TOP_HIST_H - densityCount(b.length))
+      .attr('fill', '#60a5fa').attr('fill-opacity', 0.6)
+
+    const rightHistG = svg.append('g').attr('transform', `translate(${MARGIN.left + width + HIST_GAP},${MARGIN.top})`)
+    rightHistG.append('line')
+      .attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', height)
+      .attr('stroke', '#1E2330')
+    rightHistG.selectAll('rect').data(speedBins.filter(b => b.x1 > b.x0)).join('rect')
+      .attr('y', b => y(b.x1) + 1)
+      .attr('height', b => Math.max(0, y(b.x0) - y(b.x1) - 1))
+      .attr('x', 0)
+      .attr('width', b => speedCount(b.length))
+      .attr('fill', '#4ade80').attr('fill-opacity', 0.6)
 
     //--------------------------------------------------
     // Grid + axes
@@ -98,7 +145,11 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
     if (ch.kind === 'div') {
       const ext = d3.extent(parsed, d => d[ch.key])
       const maxAbs = Math.max(Math.abs(ext[0] || 0), Math.abs(ext[1] || 0)) || 15
-      colorScale = d3.scaleSequential().domain([maxAbs, -maxAbs]).interpolator(d3.interpolateRdBu)
+      // Negative (southward, reconnection-favorable) -> red/danger end; positive
+      // (northward, calm) -> blue end — must match V3's spectrogram Bz coloring
+      // (`(clipped+15)/30`, so -15 -> t=0 -> red), or the same physical value
+      // reads as opposite colors depending which panel you're looking at.
+      colorScale = d3.scaleSequential().domain([-maxAbs, maxAbs]).interpolator(d3.interpolateRdBu)
     } else if (ch.key === 'kp') {
       colorScale = d3.scaleSequential().domain([0, 9]).interpolator(d3.interpolateViridis)
     } else {
@@ -262,11 +313,20 @@ export default function V2({ data, selectedPoints, onSelectPoints }) {
         </div>
       </div>
 
-      <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden" style={{ cursor: 'crosshair' }}>
-        {!data?.length
-          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
-          : <svg ref={svgRef} style={{ display: 'block' }} />
-        }
+      <div className="relative w-full flex-1 min-h-0 overflow-hidden">
+        <div ref={wrapRef} className="absolute inset-0" style={{ cursor: 'crosshair' }}>
+          {!data?.length
+            ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
+            : <svg ref={svgRef} style={{ display: 'block' }} />
+          }
+        </div>
+        {data?.length > 0 && emptyData && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="text-space-faint text-sm font-mono text-center px-6">
+              No data matches the current filters in this range.
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

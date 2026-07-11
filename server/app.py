@@ -14,7 +14,7 @@ df = df.sort_values('datetime').reset_index(drop=True)
 COLS = [
     'datetime', 'flow_speed_kms', 'proton_density_ncc', 'bz_gsm_nT',
     'pdyn_computed_nPa', 'dst_omni', 'kp', 'storm_flag', 'imf_mag_scalar_nT',
-    'ae_index_nT', 'sym_h_nT',
+    'ae_index_nT', 'sym_h_nT', 'proton_temp_K',
     'bz_norm', 'speed_norm', 'density_norm', 'ae_norm', 'pdyn_norm', 'imf_norm',
 ]
 

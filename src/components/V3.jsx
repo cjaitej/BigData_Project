@@ -52,13 +52,14 @@ const MARGIN = { top: 8, right: 24, bottom: 36, left: 64 }
 // as local time and the other as UTC and silently shift them apart.
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
-export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }) {
+export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm, selectedStorm }) {
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
   const svgRef       = useRef(null)
   const chartRef     = useRef(null)
 
   const [sizeTick, setSizeTick] = useState(0)
+  const [emptyData, setEmptyData] = useState(false)
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver(() => setSizeTick(t => t + 1))
@@ -96,15 +97,18 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }
 
     const colW = chartW / parsed.length
 
+    let paintedCells = 0
     ROWS.forEach((row, ri) => {
       const rowTop = ri * ROW_H
       parsed.forEach((d, ci) => {
         const val = d[row.key]
         if (val == null) return
+        paintedCells++
         ctx.fillStyle = row.colorFn(val)
         ctx.fillRect(ci * colW, rowTop, Math.max(1, Math.ceil(colW)), ROW_H - 1)
       })
     })
+    setEmptyData(paintedCells === 0)
 
     // --- SVG overlay: axes, labels, storm bands, colorbars ---
     const svg = d3.select(svgRef.current)
@@ -158,10 +162,29 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }
       const x1 = MARGIN.left + xScale(t0), x2 = MARGIN.left + xScale(t1)
       const w = Math.max(1, x2 - x1)
 
+      // The currently selected storm (picked here, in the Storm menu, or via
+      // Storm Analysis) gets a stronger teal outline + faint fill instead of
+      // the plain red outline every other storm gets, so it visibly sticks
+      // out as "this is the one you're looking at" across panels.
+      const isSelected = selectedStorm && stripZ(selectedStorm.start) <= raw1 && stripZ(selectedStorm.end) >= raw0
+
       bandsG.append('rect')
         .attr('x', x1).attr('y', MARGIN.top)
         .attr('width', w).attr('height', chartH)
-        .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
+        .attr('fill', isSelected ? 'rgba(67,217,200,0.30)' : 'none')
+        .attr('stroke', isSelected ? '#43D9C8' : 'rgba(239,68,68,0.55)')
+        .attr('stroke-width', isSelected ? 2.5 : 1.2)
+
+      // The heatmap's own colors can drown out a translucent overlay, so the
+      // selected storm also gets an unambiguous marker in the empty margin
+      // below the chart, independent of whatever's painted underneath it.
+      if (isSelected) {
+        const midX = x1 + w / 2
+        const markerY = MARGIN.top + chartH + 3
+        bandsG.append('path')
+          .attr('d', `M${midX - 5},${markerY} L${midX + 5},${markerY} L${midX},${markerY - 6} Z`)
+          .attr('fill', '#43D9C8')
+      }
 
       const match = stormCatalog?.find(s => stripZ(s.start) <= raw1 && stripZ(s.end) >= raw0)
       if (match && onSelectStorm) clickableStorms.push({ x1, w, match })
@@ -294,12 +317,12 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }
         .style('pointer-events', 'all')
         .on('click', () => onSelectStorm(match))
         .append('title')
-        .text(`${match.intensity} storm · peak Dst ${match.peak_dst_nT} nT — click to inspect in Storm Inspector / jump Orbital Sim`)
+        .text(`${match.intensity} storm · peak Dst ${match.peak_dst_nT} nT — click to open in Storm Analysis`)
     })
 
     chartRef.current = { xScale }
 
-  }, [data, selectedPoints, stormCatalog, onSelectStorm, sizeTick])
+  }, [data, selectedPoints, stormCatalog, onSelectStorm, selectedStorm, sizeTick])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
@@ -315,6 +338,13 @@ export default function V3({ data, selectedPoints, stormCatalog, onSelectStorm }
           : <>
               <canvas ref={canvasRef} style={{ position: 'absolute' }} />
               <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'block' }} />
+              {emptyData && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="text-space-faint text-sm font-mono text-center px-6">
+                    No data matches the current filters in this range.
+                  </span>
+                </div>
+              )}
             </>
         }
       </div>
