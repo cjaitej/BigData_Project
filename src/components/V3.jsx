@@ -27,18 +27,18 @@ const ROWS = [
     unit:  'n/cc',
     colorFn: (val, ext) => {
       const span = (ext[1] - ext[0]) || 1
-      return d3.interpolatePlasma(Math.max(0, Math.min(1, (val - ext[0]) / span)))
+      return d3.interpolateMagma(Math.max(0, Math.min(1, (val - ext[0]) / span)))
     },
   },
   {
     key:   'kp',
     label: 'Kp index',
     unit:  '0–9',
-    colorFn: (val) => d3.interpolateYlOrRd(Math.max(0, Math.min(1, val / 9))),
+    colorFn: (val) => d3.interpolateInferno(Math.max(0, Math.min(1, val / 9))),
   },
 ]
 
-const MARGIN = { top: 8, right: 28, bottom: 36, left: 90 }
+const MARGIN = { top: 8, right: 24, bottom: 36, left: 64 }
 
 export default function V3({ data, hoverTime, setHoverTime, selection }) {
   const containerRef = useRef(null)
@@ -136,7 +136,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
         svg.append('rect')
           .attr('x', MARGIN.left + x1).attr('y', MARGIN.top)
           .attr('width', Math.max(1, x2 - x1)).attr('height', chartH)
-          .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.85)').attr('stroke-width', 1.5)
+          .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
         inStorm = false
       }
     })
@@ -145,7 +145,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
       svg.append('rect')
         .attr('x', MARGIN.left + x1).attr('y', MARGIN.top)
         .attr('width', Math.max(1, x2 - x1)).attr('height', chartH)
-        .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.85)').attr('stroke-width', 1.5)
+        .attr('fill', 'none').attr('stroke', 'rgba(239,68,68,0.55)').attr('stroke-width', 1.2)
     }
 
     // Chart border
@@ -154,12 +154,12 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
       .attr('width', chartW).attr('height', chartH)
       .attr('fill', 'none').attr('stroke', '#1e293b').attr('stroke-width', 1)
 
-    // X axis
+    // X axis — dimmed so the heatmap cells stay the brightest pixels
     svg.append('g')
       .attr('transform', `translate(${MARGIN.left},${MARGIN.top + chartH})`)
-      .call(d3.axisBottom(xScale).ticks(8))
-      .call(ax => ax.select('.domain').attr('stroke', '#334155'))
-      .call(ax => ax.selectAll('.tick line').attr('stroke', '#334155'))
+      .call(d3.axisBottom(xScale).ticks(Math.max(3, Math.round(chartW / 110))))
+      .call(ax => ax.select('.domain').attr('stroke', '#1e293b'))
+      .call(ax => ax.selectAll('.tick line').attr('stroke', '#1e293b'))
       .call(ax => ax.selectAll('.tick text').attr('fill', '#64748b').attr('font-size', 10))
 
     // Mini colorbars (right side)
@@ -191,8 +191,8 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
     const persistBand = svg.append('rect')
       .attr('y', MARGIN.top)
       .attr('height', chartH)
-      .attr('fill', 'rgba(99,102,241,0.10)')
-      .attr('stroke', '#6366f1')
+      .attr('fill', 'rgba(139,92,246,0.12)')
+      .attr('stroke', '#8b5cf6')
       .attr('stroke-dasharray', '3,3')
       .style('display', 'none')
 
@@ -243,11 +243,9 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
 
         tooltip
           .style('opacity', 1)
-          .style('left', `${event.offsetX + 18}px`)
-          .style('top', `${event.offsetY - 12}px`)
           .html(`
             <div style="font-weight:600;margin-bottom:6px;">
-              ${d.t.toLocaleString()}
+              ${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
             </div>
             <hr style="border-color:#334155;margin:4px 0"/>
             IMF Bz : ${d.bz_gsm_nT?.toFixed(2) ?? '--'} nT<br/>
@@ -257,6 +255,19 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
             <br/>
             <b>Storm</b> : ${d.storm_flag ? '🔴 Yes' : '🟢 No'}
           `)
+
+        // Clamp so the tooltip never gets cut off by the panel's own
+        // overflow-hidden — flip to the other side of the cursor instead.
+        const contEl = containerRef.current
+        const node = tooltip.node()
+        const tw = node.offsetWidth, th = node.offsetHeight
+        let left = event.offsetX + 16
+        let top = event.offsetY - th - 10
+        if (left + tw > contEl.clientWidth) left = event.offsetX - tw - 16
+        if (left < 4) left = 4
+        if (top < 4) top = event.offsetY + 16
+        if (top + th > contEl.clientHeight) top = contEl.clientHeight - th - 4
+        tooltip.style('left', `${left}px`).style('top', `${top}px`)
       })
 
       .on('mouseout', () => {
@@ -333,11 +344,7 @@ export default function V3({ data, hoverTime, setHoverTime, selection }) {
     <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       {/* Panel header */}
       <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V3</span>
-        <span className="text-sm font-semibold text-slate-200">Event Spectrogram</span>
-        <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          parameter heatmap · red outline = storm · hover syncs
-        </span>
+        <span className="text-sm font-semibold text-slate-200" title="Parameter heatmap · red outline = storm period · hover syncs all panels">Event Spectrogram</span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}

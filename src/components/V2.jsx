@@ -89,7 +89,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         .attr("fill", "none")
 
-        .attr("stroke", "#f8fafc")
+        .attr("stroke", "#E7EAF0")
 
         .attr("stroke-width", 2)
 
@@ -154,7 +154,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll(".tick line")
 
-          .attr("stroke", "#1e293b")
+          .attr("stroke", "#1E2330")
 
       )
 
@@ -186,7 +186,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll(".tick line")
 
-          .attr("stroke", "#1e293b")
+          .attr("stroke", "#1E2330")
 
       )
 
@@ -212,7 +212,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll("text")
 
-          .attr("fill", "#94a3b8")
+          .attr("fill", "#7C8496")
 
       )
 
@@ -220,7 +220,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll("line,path")
 
-          .attr("stroke", "#475569")
+          .attr("stroke", "#252B3A")
 
       )
 
@@ -235,7 +235,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll("text")
 
-          .attr("fill", "#94a3b8")
+          .attr("fill", "#7C8496")
 
       )
 
@@ -243,7 +243,7 @@ export default function V2({ data, hoverTime, setHoverTime, selection }) {
 
         g.selectAll("line,path")
 
-          .attr("stroke", "#475569")
+          .attr("stroke", "#252B3A")
 
       )
 
@@ -284,7 +284,7 @@ const tooltip = d3
 
   .style("background", "#0f172a")
 
-  .style("border", "1px solid #334155")
+  .style("border", "1px solid #252B3A")
 
   .style("border-radius", "6px")
 
@@ -343,9 +343,9 @@ pointsGroup
 
         .html(`
 
-<b>${new Date(d.datetime).toLocaleString()}</b>
+<b>${new Date(d.datetime).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}</b>
 
-<hr style="border-color:#334155">
+<hr style="border-color:#252B3A">
 
 Speed : ${d.flow_speed_kms.toFixed(1)} km/s<br>
 
@@ -361,19 +361,23 @@ Kp : ${d.kp}
 
 .on("mousemove", function(event){
 
+    // Clamp so the tooltip never gets cut off by the panel's own
+    // overflow-hidden — flip to the other side of the cursor instead.
+    const wrapEl = wrapRef.current
+    const node = tooltip.node()
+    const tw = node.offsetWidth, th = node.offsetHeight
+    let left = event.offsetX + 15
+    let top = event.offsetY - th - 12
+    if (left + tw > wrapEl.clientWidth) left = event.offsetX - tw - 15
+    if (left < 4) left = 4
+    if (top < 4) top = event.offsetY + 15
+    if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
+
     tooltip
 
-        .style("left",
+        .style("left", `${left}px`)
 
-            (event.offsetX+15)+"px"
-
-        )
-
-        .style("top",
-
-            (event.offsetY-15)+"px"
-
-        )
+        .style("top", `${top}px`)
 
 })
 
@@ -427,7 +431,9 @@ Kp : ${d.kp}
 
       )
 
-      .attr("fill", "#94a3b8")
+      .attr("fill", "#7C8496")
+
+      .attr("font-size", 11)
 
       .text("Solar Wind Speed (km/s)")
 
@@ -467,7 +473,9 @@ Kp : ${d.kp}
 
       )
 
-      .attr("fill", "#94a3b8")
+      .attr("fill", "#7C8496")
+
+      .attr("font-size", 11)
 
       .text("Proton Density (n/cc)")
   
@@ -497,9 +505,14 @@ Kp : ${d.kp}
 
     const zy = transform.rescaleY(y)
 
+    // re-apply the dim styling — a bare .call() would reset to d3's defaults
     xAxis.call(d3.axisBottom(zx).ticks(6))
+        .call(g => g.selectAll("text").attr("fill", "#7C8496"))
+        .call(g => g.selectAll("line,path").attr("stroke", "#252B3A"))
 
     yAxis.call(d3.axisLeft(zy).ticks(6))
+        .call(g => g.selectAll("text").attr("fill", "#7C8496"))
+        .call(g => g.selectAll("line,path").attr("stroke", "#252B3A"))
 
     pointsGroup
 
@@ -617,21 +630,9 @@ Kp : ${d.kp}
 
       <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
 
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">
+        <span className="text-sm font-semibold text-slate-200" title="Speed vs density, colored by IMF Bz · scroll to zoom · hover syncs all panels">
 
-          V2
-
-        </span>
-
-        <span className="text-sm font-semibold text-slate-200">
-
-          Phase Space Explorer
-
-        </span>
-
-        <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-
-          speed vs density · Bz color · zoom
+          Phase Space
 
         </span>
 

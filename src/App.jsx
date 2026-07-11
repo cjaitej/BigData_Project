@@ -139,58 +139,76 @@ const panRight = () => {
   useEffect(() => { fetchData() }, [fetchData])
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-[#030712] text-slate-300 font-sans">
-      {/* Compact single-row header — everything must fit on one screen */}
-      <header className="flex-none border-b border-slate-800 bg-slate-900/90 px-4 py-1.5">
-        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
-          <div className="mr-1">
-            <h1 className="text-sm font-bold text-slate-100 tracking-tight leading-tight">
-              Solar Wind &amp; Space Weather Analytics
-            </h1>
-            <p className="text-[10px] text-slate-500 leading-tight">
-              CS661 · Group 21 · NASA OMNI (1-min, time-shifted to bow shock)
-            </p>
-          </div>
+    <div className="h-screen overflow-hidden flex flex-col bg-space-bg text-space-dim font-sans">
+      {/* Compact single-row header — one strict baseline, uniform control heights */}
+      <header className="flex-none border-b border-space-hairline bg-space-panel/90 px-4 py-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold text-space-text tracking-tight whitespace-nowrap leading-none">
+            Solar Wind &amp; Space Weather Analytics
+            <span className="hidden xl:inline ml-2 text-[10px] font-mono font-normal text-space-faint tracking-normal">
+              CS661 · Group 21 · NASA OMNI
+            </span>
+          </h1>
+
+          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
 
           {/* Date range controls */}
-          <label className="flex items-center gap-1.5 text-xs text-slate-400">
-            Start
-            <input
-              type="date"
-              value={draftStart}
-              min="1995-01-01"
-              max={draftEnd}
-              onChange={e => setDraftStart(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-            />
-          </label>
-          <label className="flex items-center gap-1.5 text-xs text-slate-400">
-            End
-            <input
-              type="date"
-              value={draftEnd}
-              min={draftStart}
-              onChange={e => setDraftEnd(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-            />
-          </label>
-          <button
-            onClick={() => applyRange(draftStart, draftEnd)}
-            disabled={loading}
-            className="px-3 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
-          >
-            {loading ? 'Loading…' : 'Apply'}
-          </button>
-
-          <div className="flex items-center gap-1">
-            <button onClick={panLeft} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">◀</button>
-            <button onClick={zoomOut} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">−</button>
-            <button onClick={zoomIn} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">+</button>
-            <button onClick={panRight} className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs">▶</button>
+          <div className="flex items-center gap-2 font-mono">
+            <label className="flex items-center gap-1.5 text-xs text-space-dim">
+              Start
+              <input
+                type="date"
+                value={draftStart}
+                min="1995-01-01"
+                max={draftEnd}
+                onChange={e => setDraftStart(e.target.value)}
+                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-space-dim">
+              End
+              <input
+                type="date"
+                value={draftEnd}
+                min={draftStart}
+                onChange={e => setDraftEnd(e.target.value)}
+                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
+              />
+            </label>
+            <button
+              onClick={() => applyRange(draftStart, draftEnd)}
+              disabled={loading}
+              className="h-6 px-3 rounded bg-space-violet hover:bg-violet-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
+            >
+              {loading ? 'Loading…' : 'Apply'}
+            </button>
           </div>
 
+          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
+
+          {/* Pan / zoom */}
+          <div className="flex items-center gap-1 font-mono">
+            {[
+              { label: '◀', fn: panLeft, hint: 'Pan left' },
+              { label: '−', fn: zoomOut, hint: 'Zoom out' },
+              { label: '+', fn: zoomIn, hint: 'Zoom in' },
+              { label: '▶', fn: panRight, hint: 'Pan right' },
+            ].map(b => (
+              <button
+                key={b.hint}
+                onClick={b.fn}
+                title={b.hint}
+                className="h-6 w-6 flex items-center justify-center rounded bg-space-panel-2 border border-space-hairline text-xs text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
+
           {/* Quick presets */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 font-mono">
             {[
               { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
               { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
@@ -198,7 +216,7 @@ const panRight = () => {
               <button
                 key={p.label}
                 onClick={() => applyRange(p.start, p.end)}
-                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                className="h-6 px-2 flex items-center rounded bg-space-panel-2 hover:bg-space-panel border border-space-hairline text-[10px] text-space-dim hover:text-space-text transition-colors"
               >
                 {p.label}
               </button>
@@ -206,20 +224,20 @@ const panRight = () => {
           </div>
 
           {/* Status */}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 font-mono">
             {loading && (
-              <span className="flex items-center gap-1.5 text-xs text-indigo-400">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+              <span className="flex items-center gap-1.5 text-xs text-violet-300">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-300 animate-pulse" />
                 Fetching…
               </span>
             )}
             {error && (
-              <span className="text-xs text-red-400">
+              <span className="text-xs text-space-danger">
                 API error: {error} — is Flask running on port 5000?
               </span>
             )}
             {!loading && !error && data.length > 0 && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-space-faint tabular-nums">
                 {data.length.toLocaleString()} records · {start} → {end}
               </span>
             )}
@@ -227,19 +245,20 @@ const panRight = () => {
         </div>
       </header>
 
-      {/* Loading progress bar */}
-      {loading && (
-        <div className="flex-none h-0.5 bg-slate-800">
-          <div className="h-full bg-indigo-500 animate-pulse" style={{ width: '60%' }} />
-        </div>
-      )}
+      {/* Loading progress bar — fixed-height slot so paging doesn't shift the layout */}
+      <div className="flex-none h-0.5 bg-transparent">
+        {loading && <div className="h-full bg-space-violet animate-pulse" style={{ width: '60%' }} />}
+      </div>
 
-      {/* Single-screen dashboard grid — V5 is the hub, everything links to it */}
+      {/* Side-by-side: V5 (simulator + its own timeline/controls) on the left,
+          the four analytical panels stacked full-width on the right — both
+          stay visible at once, no toggling needed. V5's clock drives the
+          right side. */}
       <main
-        className="flex-1 min-h-0 grid grid-cols-12 gap-2 p-2"
-        style={{ gridTemplateRows: 'minmax(0, 11fr) minmax(0, 9fr)' }}
+        className="flex-1 min-h-0 grid gap-2 px-2 pb-2"
+        style={{ gridTemplateColumns: 'minmax(0, 65fr) minmax(0, 35fr)' }}
       >
-        <div className="col-span-7 min-h-0">
+        <div className="min-h-0">
           <V5
             start={start}
             end={end}
@@ -249,35 +268,37 @@ const panRight = () => {
             applyRange={applyRange}
           />
         </div>
-        <div className="col-span-5 min-h-0">
-          <V1
-            data={data}
-            setDraftStart={setDraftStart}
-            setDraftEnd={setDraftEnd}
-            hoverTime={hoverTime}
-            setHoverTime={setHoverTime}
-            selection={selection}
-            setSelection={setSelection}
-          />
-        </div>
-        <div className="col-span-3 min-h-0">
-          <V2
-            data={data}
-            hoverTime={hoverTime}
-            setHoverTime={setHoverTime}
-            selection={selection}
-          />
-        </div>
-        <div className="col-span-5 min-h-0">
-          <V3
-            data={data}
-            hoverTime={hoverTime}
-            setHoverTime={setHoverTime}
-            selection={selection}
-          />
-        </div>
-        <div className="col-span-4 min-h-0">
-          <V4 data = {data} />
+        <div className="min-h-0 overflow-hidden grid grid-rows-4 gap-2">
+          <div className="min-h-0 overflow-hidden">
+            <V1
+              data={data}
+              setDraftStart={setDraftStart}
+              setDraftEnd={setDraftEnd}
+              hoverTime={hoverTime}
+              setHoverTime={setHoverTime}
+              selection={selection}
+              setSelection={setSelection}
+            />
+          </div>
+          <div className="min-h-0 overflow-hidden">
+            <V3
+              data={data}
+              hoverTime={hoverTime}
+              setHoverTime={setHoverTime}
+              selection={selection}
+            />
+          </div>
+          <div className="min-h-0 overflow-hidden">
+            <V2
+              data={data}
+              hoverTime={hoverTime}
+              setHoverTime={setHoverTime}
+              selection={selection}
+            />
+          </div>
+          <div className="min-h-0 overflow-hidden">
+            <V4 data={data} />
+          </div>
         </div>
       </main>
     </div>

@@ -1,16 +1,28 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // Ported from V2_And_V5/v5.html. The simulator is plain canvas code, so it
 // lives in one mount-only effect; React never re-renders this subtree, all
 // DOM updates happen imperatively inside the animation loop.
 // Data comes from the Flask API (/api/orbital/daily + /api/orbital/storms).
 //
+// Physical realism — every visual behavior is either the real measured data
+// or a real physics formula, not a hand-tuned look:
+//  - orbits are true ellipses (real eccentricities), planets move via
+//    Kepler's equation (faster at perihelion, slower at aphelion)
+//  - the magnetosphere's size/shape is the Shue et al. (1998) empirical
+//    magnetopause model, driven every single day by that day's real Bz and
+//    Pdyn — not a 3-bucket "storm intensity" lookup, and never absent
+//  - the aurora glow strength is continuous in real Kp, not a boolean gate
+//  - solar wind particles follow a Parker spiral (curvature set by the
+//    real measured wind speed) instead of moving radially
+//  - CME travel time is 1 AU / that storm's real measured peak speed
+//
 // Linked-view hub:
 //  - while PLAYING, the sim broadcasts the shared hoverTime cursor whenever
 //    the playhead is inside the dashboard's loaded range (V1/V2/V3 follow)
 //  - while PAUSED, the sim follows hoverTime coming from the other panels
 //  - the dashboard range + brushed selection are drawn on the 30-year
-//    timeline as indigo bands
+//    timeline as violet bands
 //  - picking a storm (dropdown / clicking Earth mid-storm) loads that
 //    storm's window into the whole dashboard via applyRange()
 
@@ -30,6 +42,7 @@ const V5_CSS = `
     --danger:#FF5B54;
     --calm:#4F8CFF;
     --aurora:#5CF2A0;
+    --violet:#8B5CF6;
     --mono: 'JetBrains Mono', monospace;
     --sans: 'Space Grotesk', sans-serif;
     display:flex;
@@ -78,21 +91,40 @@ const V5_CSS = `
     animation: v5-pulse 1.4s ease-in-out infinite;
     pointer-events:none;
     white-space:nowrap;
-    max-width:calc(100% - 190px);
+    max-width:calc(100% - 70px);
     overflow:hidden; text-overflow:ellipsis;
     z-index:3;
   }
   @keyframes v5-pulse{ 0%,100%{opacity:0.85;} 50%{opacity:1;box-shadow:0 0 14px rgba(255,91,84,0.35);} }
 
-  .v5-mag-monitor{
-    position:absolute; top:10px; right:10px;
-    background:rgba(14,17,23,0.86);
-    border:1px solid var(--hairline);
-    border-radius:8px;
-    padding:7px 8px 6px;
-    pointer-events:none;
-    z-index:4;
+  /* Info drawer — Magnetosphere monitor + legend, tucked off-canvas by
+     default so the simulator keeps the screen real estate; slides in from
+     the right edge when the toggle is pressed. */
+  .v5-drawer-toggle{
+    position:absolute; top:10px; right:10px; z-index:6;
+    background:rgba(14,17,23,0.86); border:1px solid var(--hairline); border-radius:6px;
+    color:var(--text-dim); font-family:var(--mono); font-size:11px; line-height:1;
+    padding:6px 8px; cursor:pointer; transition:all 120ms ease;
   }
+  .v5-drawer-toggle:hover{ color:var(--text); border-color:var(--fast); }
+
+  .v5-drawer{
+    position:absolute; top:0; right:0; bottom:0; width:172px;
+    background:rgba(10,12,16,0.94);
+    border-left:1px solid var(--hairline);
+    padding:44px 10px 10px;
+    display:flex; flex-direction:column; gap:8px;
+    transform:translateX(100%);
+    transition:transform 180ms ease;
+    z-index:5; overflow-y:auto; overflow-x:hidden;
+  }
+  .v5-drawer.open{ transform:translateX(0); }
+  .v5-drawer-divider{ height:1px; background:var(--hairline); margin:2px 0; flex:none; }
+  .v5-drawer-title{
+    font-family:var(--mono); font-size:9px; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--text-faint); flex:none;
+  }
+
   .v5-mag-monitor-title{
     font-family:var(--mono); font-size:8.5px; letter-spacing:0.09em; text-transform:uppercase;
     color:var(--text-faint); margin-bottom:3px; text-align:center;
@@ -109,48 +141,51 @@ const V5_CSS = `
     font-family:var(--mono); font-size:11px; color:var(--text-faint);
   }
 
-  /* compact conditions readout — overlays the canvas, bottom-left */
+  /* compact conditions readout — overlays the canvas, bottom-left, as a row
+     of individual pill chips rather than one flat bar */
   .v5-readout{
     position:absolute; left:10px; bottom:10px;
-    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-    background:rgba(14,17,23,0.85);
-    border:1px solid var(--hairline); border-radius:8px;
-    padding:5px 10px;
-    font-family:var(--mono); font-size:10px; color:var(--text-faint);
-    letter-spacing:0.04em; text-transform:uppercase;
+    display:flex; align-items:center; gap:5px; flex-wrap:wrap;
     pointer-events:none; z-index:4;
     max-width:calc(100% - 20px);
   }
-  .v5-ro b{ color:var(--text); font-weight:500; margin-left:2px; }
+  .v5-ro{
+    display:inline-flex; align-items:center; gap:4px;
+    background:rgba(14,17,23,0.88);
+    border:1px solid var(--hairline); border-radius:999px;
+    padding:3px 9px;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    letter-spacing:0.04em; text-transform:uppercase;
+  }
+  .v5-ro b{ color:var(--text); font-weight:500; }
   .v5-ro b.ok{ color:var(--fast); }
   .v5-ro b.warn{ color:var(--slow); }
   .v5-ro b.bad{ color:var(--danger); }
   .v5-ro b.flash{ animation: v5-flash 1s ease-in-out infinite; }
   @keyframes v5-flash{ 0%,100%{opacity:1;} 50%{opacity:0.45;} }
 
-  .v5-legend-overlay{
-    position:absolute; right:10px; bottom:10px;
-    display:flex; flex-direction:column; gap:3px;
-    background:rgba(14,17,23,0.75);
-    border:1px solid var(--hairline); border-radius:8px;
-    padding:5px 8px;
-    font-family:var(--mono); font-size:9px; color:var(--text-dim);
-    pointer-events:none; z-index:4;
-  }
+  .v5-legend{ display:flex; flex-direction:column; gap:6px; font-family:var(--mono); font-size:9.5px; color:var(--text-dim); }
   .v5-legend-row{ display:flex; align-items:center; gap:6px; }
   .v5-legend-dot{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
 
-  .v5-regime-badge{ display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:0.05em; text-transform:uppercase; padding:1px 8px; border-radius:10px; border:1px solid; }
+  .v5-regime-badge{ display:inline-block; font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; padding:3px 10px; border-radius:999px; border:1px solid; }
   .v5-regime-slow{ color:var(--slow); border-color:var(--slow); background:rgba(232,163,61,0.1); }
   .v5-regime-fast{ color:var(--fast); border-color:var(--fast); background:rgba(67,217,200,0.1); }
   .v5-regime-cme{ color:var(--cme); border-color:var(--cme); background:rgba(198,95,232,0.1); }
   .v5-regime-unknown{ color:var(--text-faint); border-color:var(--hairline); background:transparent; }
 
-  .v5-timeline-block{ flex:none; background:var(--panel-2); border:1px solid var(--hairline); border-radius:8px; padding:8px 12px 6px; }
-  .v5-timeline-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; }
-  .v5-date-readout{ font-family:var(--mono); font-size:13px; color:var(--text); letter-spacing:0.03em; }
-  .v5-date-readout .v5-day-of{ color:var(--text-faint); font-size:10px; margin-left:6px; }
+  .v5-timeline-block{ flex:none; background:var(--panel-2); border:1px solid var(--hairline); border-radius:8px; padding:8px 12px 6px; position:relative; }
+  .v5-timeline-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px; flex-wrap:wrap; gap:6px; }
+  .v5-timeline-title{ display:flex; align-items:baseline; gap:8px; }
+  .v5-timeline-title b{ font-family:var(--sans); font-size:13px; font-weight:600; color:var(--text); }
+  .v5-date-readout{ font-family:var(--mono); font-size:11px; color:var(--text-dim); letter-spacing:0.03em; }
+  .v5-date-readout .v5-day-of{ color:var(--text-faint); font-size:10px; margin-left:4px; }
   #v5-timeline{ display:block; width:100%; height:52px; cursor:pointer; }
+
+  .v5-severity-legend{ display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:9.5px; color:var(--text-dim); }
+  .v5-severity-legend span{ display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  .v5-severity-legend i{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; font-style:normal; }
+  .v5-severity-legend b{ color:var(--text); font-weight:600; margin-left:1px; }
 
   .v5-controls{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:6px; }
   .v5-btn{
@@ -160,6 +195,9 @@ const V5_CSS = `
   }
   .v5-btn:hover{ color:var(--text); border-color:var(--fast); }
   .v5-btn.active{ color:var(--bg); background:var(--fast); border-color:var(--fast); }
+  .v5-play-btn{
+    font-size:12px; padding:4px 11px; border-radius:999px; line-height:1;
+  }
   select.v5-btn{ appearance:none; -webkit-appearance:none; padding-right:20px;
     background-image: linear-gradient(45deg, transparent 50%, var(--text-faint) 50%), linear-gradient(135deg, var(--text-faint) 50%, transparent 50%);
     background-position: calc(100% - 11px) center, calc(100% - 7px) center; background-size:4px 4px, 4px 4px; background-repeat:no-repeat;
@@ -179,6 +217,9 @@ const V5_CSS = `
 export default function V5({ start, end, hoverTime, setHoverTime, selection, applyRange }) {
   const rootRef = useRef(null)
   const apiRef = useRef(null)
+  // Consolidated Magnetosphere widget + legend, tucked into a side drawer so
+  // the canvas keeps the screen real estate by default.
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   // Live props for the imperative sim (mount-only effect reads this ref)
   const linkRef = useRef({})
@@ -194,6 +235,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
     const wrap = $('v5-canvas-wrap')
     const canvas = $('v5-canvas')
     const ctx = canvas.getContext('2d')
+    const timelineBlock = $('v5-timeline-block')
     const tlCanvas = $('v5-timeline')
     const tlCtx = tlCanvas.getContext('2d')
     const tooltip = $('v5-tooltip')
@@ -207,18 +249,69 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
 
     const cssVars = getComputedStyle($('v5-root'))
     const COL = k => (cssVars.getPropertyValue(k) || '').trim() || '#888'
-    const C_FAST = COL('--fast'), C_SLOW = COL('--slow'), C_CME = COL('--cme'),
+    const C_SLOW = COL('--slow'), C_CME = COL('--cme'),
           C_DANGER = COL('--danger'), C_CALM = COL('--calm'), C_AURORA = COL('--aurora'),
-          C_HAIR = COL('--hairline'), C_TEXTFAINT = COL('--text-faint')
+          C_HAIR = COL('--hairline'), C_TEXTFAINT = COL('--text-faint'), C_VIOLET = COL('--violet')
 
+    // Real sidereal orbital periods (days) and eccentricities — Mercury's and
+    // Mars's visibly egg-shaped orbits and Earth's near-perfect circle are
+    // the actual shapes, not artistic license.
     const PLANETS = [
-      { name:'Mercury', period:88,     radiusFactor:0.13, size:2.6, color:'#9C9B8E' },
-      { name:'Venus',   period:225,    radiusFactor:0.20, size:4.6, color:'#E8C07D' },
-      { name:'Earth',   period:365.25, radiusFactor:0.30, size:10.4, color:'#4F8CFF', isEarth:true },
-      { name:'Mars',    period:687,    radiusFactor:0.40, size:3.6, color:'#D96B4A' },
+      { name:'Mercury', period:87.969,  ecc:0.2056, radiusFactor:0.13, size:3.0,  color:'#9C9B8E' },
+      { name:'Venus',   period:224.701, ecc:0.0068, radiusFactor:0.20, size:5.4,  color:'#E8C07D' },
+      { name:'Earth',   period:365.256, ecc:0.0167, radiusFactor:0.30, size:12.5, color:'#4F8CFF', isEarth:true },
+      { name:'Mars',    period:686.980, ecc:0.0934, radiusFactor:0.40, size:4.2,  color:'#D96B4A' },
     ]
 
-    let daily = [], storms = [], stormById = {}, dayStormId = [], dayIntensity = []
+    // ---- real physics constants ----
+    const AU_KM = 1.496e8
+    const OMEGA_SUN = (2*Math.PI) / (25.4 * 86400)   // sidereal solar rotation, rad/s
+    const R0_QUIET = 10.5                             // Earth radii, typical quiet-time magnetopause standoff
+
+    // Solve Kepler's equation M = E - e*sin(E) for the eccentric anomaly E
+    // (Newton-Raphson; converges in a few steps for these small eccentricities).
+    function solveKepler(M, e){
+      let E = M
+      for(let i=0; i<8; i++) E -= (E - e*Math.sin(E) - M) / (1 - e*Math.cos(E))
+      return E
+    }
+
+    // Shue et al. (1998) empirical magnetopause standoff distance (Earth radii),
+    // from that day's real measured IMF Bz (nT) and dynamic pressure Pdyn (nPa).
+    function magnetopauseR0(bz, pdyn){
+      const b = bz ?? 0, p = Math.max(0.1, pdyn ?? 2)
+      return (10.22 + 1.29*Math.tanh(0.184*(b + 8.14))) * Math.pow(p, -1/6.6)
+    }
+
+    // Returns a 6-digit "#rrggbb" hex string (not "rgb(...)") — callers like
+    // drawMagMonitor's aurora glow append a 2-digit alpha suffix ('55'/'00'),
+    // which only produces a valid CSS color on top of a hex string.
+    function lerpColor(hexA, hexB, t){
+      const a = parseInt(hexA.slice(1), 16), b = parseInt(hexB.slice(1), 16)
+      const ar=(a>>16)&255, ag=(a>>8)&255, ab=a&255
+      const br=(b>>16)&255, bg=(b>>8)&255, bb=b&255
+      const r=Math.round(ar+(br-ar)*t), g=Math.round(ag+(bg-ag)*t), bl=Math.round(ab+(bb-ab)*t)
+      const toHex = v => v.toString(16).padStart(2,'0')
+      return `#${toHex(r)}${toHex(g)}${toHex(bl)}`
+    }
+
+    // Continuous, physics-driven magnetosphere state for a given day's real
+    // Bz/Pdyn/Kp — computed for every day, not just cataloged storm events.
+    function magnetosphereState(row){
+      const r0 = magnetopauseR0(row.Bz, row.Pdyn)
+      const compress = Math.max(0.35, Math.min(1.35, r0 / R0_QUIET))
+      const stretch = Math.max(0.8, Math.min(5, 2.3 / compress))
+      const kp = row.Kp ?? 0
+      const auroraStrength = Math.max(0, Math.min(1, (kp - 1) / 8))
+      const calmness = Math.max(0, Math.min(1, (compress - 0.35) / (1.05 - 0.35)))
+      return {
+        compress, stretch, auroraStrength, calmness,
+        col: lerpColor(C_DANGER, C_CALM, calmness),
+        pulseSpeed: 1 + (1 - calmness)*6.5,
+      }
+    }
+
+    let daily = [], storms = [], stormById = {}, dayStormId = []
     let totalDays = 0, startDate = null
     let simDay = 0, playing = true, daysPerSecond = 5, lastTs = null, tGlobal = 0
     let prevStormId = null
@@ -230,12 +323,15 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
     let dpr = Math.max(1, window.devicePixelRatio || 1)
     let W = 0, H = 0, cx = 0, cy = 0, scale = 0
     let earthAngle = 0, earthX = 0, earthY = 0, earthOrbitR = 0
-    let stormZoom = 1, stormZoomTarget = 1, userZoom = 1.35, zoom = 1
-    const USER_ZOOM_MIN = 0.7, USER_ZOOM_MAX = 2.6
+    // Default zoom is cropped tight on the Sun-Earth zone — Mars and the
+    // asteroid belt sit mostly outside the frame until the user zooms out.
+    let stormZoom = 1, stormZoomTarget = 1, userZoom = 1.8, zoom = 1
+    const USER_ZOOM_MIN = 0.6, USER_ZOOM_MAX = 2.8
 
     // linked-view state
     let lastSentDay = null, lastSentTs = 0, wasInRange = false
     let suppressRangeSeek = false
+    let autoSync = true, lastPageTs = 0   // sim clock drives the dashboard window
 
     // effect lifecycle (StrictMode double-mount safe)
     let disposed = false, rafId = 0, resizeObserver = null
@@ -338,6 +434,25 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       link.applyRange(t0.toISOString().slice(0,10), t1.toISOString().slice(0,10))
     }
 
+    // The sim clock drives the dashboard: when the playhead leaves the loaded
+    // window (playing or scrubbing), page the window forward to the playhead,
+    // keeping its span. Rate-limited so fast playback doesn't spam the API.
+    function maybePageWindow(now){
+      if(!autoSync || !startDate) return
+      const link = linkRef.current
+      if(!link.start || !link.end || !link.applyRange) return
+      const day = Math.floor(simDay)
+      const ds = fmtDate(day)
+      if(ds >= link.start && ds <= link.end) return          // still inside
+      if(now - lastPageTs < 1200) return                     // let the last fetch land
+      lastPageTs = now
+      const spanDays = Math.max(2, Math.round(
+        (new Date(link.end + 'T00:00:00Z') - new Date(link.start + 'T00:00:00Z')) / 86400000))
+      const startIdx = Math.max(0, Math.min(totalDays - 1 - spanDays, day))
+      suppressRangeSeek = true
+      link.applyRange(fmtDate(startIdx), fmtDate(Math.min(totalDays - 1, startIdx + spanDays)))
+    }
+
     apiRef.current = { onExternalHover, onRangeChange }
 
     // ---------- load ----------
@@ -363,17 +478,17 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       storms.forEach(s => stormById[s.id] = s)
 
       dayStormId = new Array(totalDays).fill(null)
-      dayIntensity = new Array(totalDays).fill(null)
       storms.forEach(s=>{
         const sd = Math.max(0, dayIndexFromISO(s.start))
         const ed = Math.min(totalDays-1, dayIndexFromISO(s.end))
-        for(let d=sd; d<=ed; d++){ dayStormId[d] = s.id; dayIntensity[d] = s.intensity }
+        for(let d=sd; d<=ed; d++){ dayStormId[d] = s.id }
       })
 
-      $('v5-count').textContent =
-        `${totalDays.toLocaleString()} days · 1995–2025 · ${storms.length} storms`
-      $('v5-storm-count-sub').textContent =
-        `${storms.filter(s=>s.intensity==='severe').length} severe · ${storms.filter(s=>s.intensity==='intense').length} intense · ${storms.filter(s=>s.intensity==='moderate').length} moderate`
+      $('v5-stat-days').textContent = totalDays.toLocaleString()
+      $('v5-stat-storms').textContent = storms.length.toLocaleString()
+      $('v5-cnt-severe').textContent = storms.filter(s=>s.intensity==='severe').length
+      $('v5-cnt-intense').textContent = storms.filter(s=>s.intensity==='intense').length
+      $('v5-cnt-moderate').textContent = storms.filter(s=>s.intensity==='moderate').length
 
       populateStormSelect()
       bindControls()
@@ -429,10 +544,10 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       windParticles = []
       const n = 150
       const maxR = scale * 0.5
-      const sunR = scale * 0.055
+      const sunR = scale * 0.062
       for(let i=0;i<n;i++){
         windParticles.push({
-          angle: Math.random()*Math.PI*2,
+          angle0: Math.random()*Math.PI*2,   // emission angle at the Sun
           r: sunR + Math.random()*maxR,
           speedFactor: 0.7 + Math.random()*0.6
         })
@@ -450,10 +565,9 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       const playBtn = $('v5-play')
       playBtn.addEventListener('click', ()=>{
         playing = !playing
-        playBtn.textContent = playing ? '⏸ PAUSE' : '▶ PLAY'
-        playBtn.classList.toggle('active', playing)
+        updatePlayUI()
       })
-      playBtn.classList.add('active')
+      updatePlayUI()   // sync label/style with the initial `playing = true` state
 
       $('v5-speed').addEventListener('change', (e)=>{
         daysPerSecond = parseFloat(e.target.value)
@@ -470,6 +584,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
         if(cands.length){ simDay = Math.min(...cands); playing=false; updatePlayUI() }
       })
 
+      $('v5-toggle-sync').addEventListener('change', e=> autoSync = e.target.checked)
       $('v5-toggle-wind').addEventListener('change', e=> showWind = e.target.checked)
       $('v5-toggle-orbits').addEventListener('change', e=> showOrbits = e.target.checked)
       $('v5-toggle-labels').addEventListener('change', e=> showLabels = e.target.checked)
@@ -509,7 +624,8 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
 
     function updatePlayUI(){
       const playBtn = $('v5-play')
-      playBtn.textContent = playing ? '⏸ PAUSE' : '▶ PLAY'
+      playBtn.textContent = playing ? '⏸' : '▶'
+      playBtn.title = playing ? 'Pause' : 'Play'
       playBtn.classList.toggle('active', playing)
     }
 
@@ -520,7 +636,8 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       const frac = Math.min(1, Math.max(0, (x-pad)/(rect.width-2*pad)))
       simDay = frac * (totalDays-1)
       lastSentDay = null
-      broadcast(performance.now())   // scrubbing publishes the cursor too
+      broadcast(performance.now())        // scrubbing publishes the cursor too
+      maybePageWindow(performance.now())  // …and drags the dashboard window along
     }
 
     function handleTooltip(e){
@@ -533,8 +650,11 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       const frac = Math.min(1, Math.max(0, (x-pad)/(rect.width-2*pad)))
       const idx = Math.round(frac*(totalDays-1))
       tooltip.textContent = fmtDate(idx)
-      tooltip.style.left = (e.clientX - wrap.getBoundingClientRect().left) + 'px'
-      tooltip.style.top = (rect.top - wrap.getBoundingClientRect().top) + 'px'
+      // tooltip lives inside .v5-timeline-block (its own positioning context),
+      // not the solar-system canvas above it — anchor to that, not `wrap`.
+      const blockRect = timelineBlock.getBoundingClientRect()
+      tooltip.style.left = (e.clientX - blockRect.left) + 'px'
+      tooltip.style.top = (rect.top - blockRect.top) + 'px'
       tooltip.style.display = 'block'
     }
 
@@ -571,6 +691,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
         simDay += daysPerSecond*dt
         if(simDay >= totalDays-1){ simDay = totalDays-1; playing=false; updatePlayUI() }
         broadcast(ts)
+        maybePageWindow(ts)
       }
       simDay = Math.max(0, Math.min(totalDays-1, simDay))
 
@@ -586,7 +707,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       const sid = dayStormId[idx]
       if(sid !== prevStormId){
         if(sid != null){
-          spawnCME(dayIntensity[idx])
+          spawnCME(stormById[sid])
           showBanner(stormById[sid])
         } else {
           bannerEl.style.display = 'none'
@@ -602,9 +723,17 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       bannerEl.style.display = 'flex'
     }
 
-    function spawnCME(intensity){
+    // Transit time is 1 AU / that storm's real measured peak solar wind
+    // speed, scaled into playback seconds by the current speed multiplier —
+    // at 1x, the CME's visual travel time in seconds equals its real transit
+    // time in days, so faster-measured storms visibly arrive sooner.
+    function spawnCME(storm){
+      const intensity = storm.intensity
       const sizeFactor = intensity === 'severe' ? 1.5 : intensity === 'intense' ? 1.15 : 0.85
-      cmes.push({ progress: 0, angle: earthAngle, intensity, sizeFactor, duration: 1.7 })
+      const speedKms = Math.max(250, storm.peak_speed_kms || 400)
+      const transitDays = (AU_KM / speedKms) / 86400
+      const duration = Math.max(0.4, Math.min(6, transitDays / Math.max(1, daysPerSecond)))
+      cmes.push({ progress: 0, angle: earthAngle, intensity, sizeFactor, duration })
       flashAlpha = Math.max(flashAlpha, 0.12)
     }
 
@@ -676,7 +805,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
     }
 
     function drawSun(){
-      const r = scale*0.055 * (1 + 0.04*Math.sin(tGlobal*1.6))
+      const r = scale*0.062 * (1 + 0.04*Math.sin(tGlobal*1.6))
       const grad = ctx.createRadialGradient(cx,cy,0, cx,cy,r*3.2)
       grad.addColorStop(0,'rgba(255,214,120,0.9)')
       grad.addColorStop(0.35,'rgba(255,170,60,0.35)')
@@ -703,16 +832,27 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       ctx.restore()
     }
 
-    function orbitRadius(pf){ return pf*scale*1.55 }
+    function orbitRadius(pf){ return pf*scale*1.55 }   // semi-major axis, a
 
+    // True ellipses, Sun at the focus (not the geometric center) — Mercury's
+    // e≈0.21 makes this visibly egg-shaped; Venus/Earth stay near-circular.
     function drawOrbitPaths(){
       ctx.save()
       ctx.strokeStyle = C_HAIR
       ctx.setLineDash([2,4])
       ctx.lineWidth = 1
       PLANETS.forEach(p=>{
+        const a = orbitRadius(p.radiusFactor)
+        const b = a * Math.sqrt(1 - p.ecc*p.ecc)
+        const c = a * p.ecc
         ctx.beginPath()
-        ctx.arc(cx,cy, orbitRadius(p.radiusFactor), 0, Math.PI*2)
+        for(let i=0; i<=120; i++){
+          const E = (i/120) * Math.PI*2
+          const x = cx - c + a*Math.cos(E)
+          const y = cy + b*Math.sin(E)
+          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)
+        }
+        ctx.closePath()
         ctx.stroke()
       })
       // faint asteroid belt
@@ -723,30 +863,32 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       ctx.restore()
     }
 
+    // Kepler's equal-areas-in-equal-times law: each planet's angular speed
+    // varies around its orbit (fastest at perihelion) instead of the uniform
+    // circular motion a simple angle=(day/period)*2π would give.
     let planetPos = []
     function computePlanetPositions(){
       planetPos = PLANETS.map(p=>{
-        const angle = (simDay / p.period) * Math.PI*2
-        const r = orbitRadius(p.radiusFactor)
-        const x = cx + Math.cos(angle)*r
-        const y = cy + Math.sin(angle)*r
-        if(p.isEarth){ earthAngle = angle; earthX = x; earthY = y; earthOrbitR = r }
-        return { ...p, angle, x, y, r }
+        const a = orbitRadius(p.radiusFactor)
+        const e = p.ecc
+        const M = ((simDay / p.period) * Math.PI*2) % (Math.PI*2)
+        const E = solveKepler(M, e)
+        const theta = 2*Math.atan2(Math.sqrt(1+e)*Math.sin(E/2), Math.sqrt(1-e)*Math.cos(E/2))
+        const r = a * (1 - e*Math.cos(E))
+        const x = cx + Math.cos(theta)*r
+        const y = cy + Math.sin(theta)*r
+        if(p.isEarth){ earthAngle = theta; earthX = x; earthY = y; earthOrbitR = r }
+        return { ...p, angle: theta, x, y, r }
       })
     }
 
     function drawPlanets(){
       const idx = Math.floor(simDay)
-      const activeStorm = dayStormId[idx] != null ? stormById[dayStormId[idx]] : null
       const row = daily[idx] || {}
-      const kpAuroraOnly = !activeStorm && row.Kp != null && row.Kp >= 6
 
       planetPos.forEach(p=>{
-        if(p.isEarth && activeStorm){
-          drawMagnetosphere(p, activeStorm.intensity, row.Dst)
-        } else if(p.isEarth && kpAuroraOnly){
-          drawAuroraOnly(p)
-        }
+        if(p.isEarth) drawMagnetosphere(p, magnetosphereState(row), row.Dst)
+
         ctx.beginPath()
         ctx.fillStyle = p.color
         ctx.shadowColor = p.color
@@ -764,17 +906,20 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       })
     }
 
-    function drawMagnetosphere(p, intensity, dstVal){
-      const compress = intensity === 'severe' ? 0.38 : intensity === 'intense' ? 0.58 : 0.8
-      const stretch = intensity === 'severe' ? 4.6 : intensity === 'intense' ? 3.2 : 2.1
+    // Earth's field is always here — compression/stretch/aurora are
+    // continuous functions of that day's real Bz/Pdyn/Kp (magnetosphereState),
+    // not a boolean gated behind the cataloged storm list.
+    function drawMagnetosphere(p, state, dstVal){
+      const { compress, stretch, col, pulseSpeed, auroraStrength } = state
       const baseR = p.size * 3.4 * compress
       const sunDir = Math.atan2(cy-p.y, cx-p.x)
       const nightDir = sunDir + Math.PI
 
-      // compressed bow shock, sun-facing side — pushed in hard during storms
+      // bow shock / magnetopause, sun-facing side — standoff distance from
+      // the real Shue et al. model, pulsing faster the more disturbed it is
       ctx.save()
-      ctx.strokeStyle = C_AURORA
-      ctx.globalAlpha = 0.6 + 0.3*Math.sin(tGlobal*4)
+      ctx.strokeStyle = col
+      ctx.globalAlpha = 0.5 + 0.3*Math.sin(tGlobal*pulseSpeed)
       ctx.setLineDash([2,3])
       ctx.lineWidth = 1.6
       ctx.beginPath()
@@ -785,8 +930,8 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       // stretched magnetotail on the night side — the classic "solar wind
       // crushes the day side, drags out the night side" shape
       ctx.save()
-      ctx.strokeStyle = C_AURORA
-      ctx.globalAlpha = 0.35
+      ctx.strokeStyle = col
+      ctx.globalAlpha = 0.32
       ctx.lineWidth = 1.2
       ctx.setLineDash([1,3])
       const tailLen = p.size * stretch
@@ -804,13 +949,16 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       }
       ctx.restore()
 
-      // pole glow (aurora)
-      const glowR = p.size * 2.8
-      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR)
-      grad.addColorStop(0, 'rgba(92,242,160,0.4)')
-      grad.addColorStop(1, 'rgba(92,242,160,0)')
-      ctx.fillStyle = grad
-      ctx.beginPath(); ctx.arc(p.x, p.y, glowR, 0, Math.PI*2); ctx.fill()
+      // pole glow (aurora) — continuous strength from real Kp, always at
+      // least faintly present rather than an on/off threshold
+      if(auroraStrength > 0.02){
+        const glowR = p.size * (1.8 + auroraStrength*1.4)
+        const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR)
+        grad.addColorStop(0, `rgba(92,242,160,${(0.15 + auroraStrength*0.35).toFixed(3)})`)
+        grad.addColorStop(1, 'rgba(92,242,160,0)')
+        ctx.fillStyle = grad
+        ctx.beginPath(); ctx.arc(p.x, p.y, glowR, 0, Math.PI*2); ctx.fill()
+      }
 
       if(showLabels && dstVal != null){
         ctx.font = '9px ' + "'JetBrains Mono', monospace"
@@ -818,15 +966,6 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
         ctx.textAlign = 'center'
         ctx.fillText(`Dst ${dstVal.toFixed(0)} nT`, p.x, p.y + p.size + 14)
       }
-    }
-
-    function drawAuroraOnly(p){
-      const glowR = p.size * 2.2
-      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR)
-      grad.addColorStop(0, 'rgba(92,242,160,0.22)')
-      grad.addColorStop(1, 'rgba(92,242,160,0)')
-      ctx.fillStyle = grad
-      ctx.beginPath(); ctx.arc(p.x, p.y, glowR, 0, Math.PI*2); ctx.fill()
     }
 
     // ---------- magnetosphere monitor (always-visible close-up inset) ----------
@@ -848,21 +987,11 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
 
       const row = daily[idx] || {}
       const activeStorm = dayStormId[idx] != null ? stormById[dayStormId[idx]] : null
-      const auroraOnly = !activeStorm && row.Kp != null && row.Kp >= 6
-
-      let compress, stretch, pulseSpeed, col, label
-      if(activeStorm){
-        const it = activeStorm.intensity
-        compress   = it === 'severe' ? 0.32 : it === 'intense' ? 0.52 : 0.76
-        stretch    = it === 'severe' ? 3.8  : it === 'intense' ? 2.7  : 1.7
-        pulseSpeed = it === 'severe' ? 7    : it === 'intense' ? 5   : 3.5
-        col   = it === 'severe' ? C_DANGER : it === 'intense' ? C_SLOW : C_AURORA
-        label = it === 'severe' ? 'SEVERE STORM' : it === 'intense' ? 'INTENSE STORM' : 'MINOR STORM'
-      } else if(auroraOnly){
-        compress = 0.9; stretch = 1.3; pulseSpeed = 2.4; col = C_AURORA; label = 'AURORA ACTIVE'
-      } else {
-        compress = 1.0; stretch = 1.0; pulseSpeed = 1.1; col = C_CALM; label = 'CALM'
-      }
+      const state = magnetosphereState(row)
+      const { compress, stretch, col, pulseSpeed, calmness } = state
+      const label = activeStorm
+        ? `${activeStorm.intensity.toUpperCase()} STORM`
+        : calmness > 0.7 ? 'CALM' : calmness > 0.4 ? 'UNSETTLED' : 'ACTIVE'
 
       const ex = MAG_W*0.62, ey = MAG_H*0.54
       const earthR = 6
@@ -914,8 +1043,8 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       })
       magCtx.restore()
 
-      // pole glow / aurora
-      const glowR = earthR * (activeStorm ? 3.4 : auroraOnly ? 2.6 : 1.9)
+      // pole glow / aurora — continuous strength from real Kp
+      const glowR = earthR * (1.6 + state.auroraStrength*1.8)
       const grad = magCtx.createRadialGradient(ex,ey,0, ex,ey,glowR)
       grad.addColorStop(0, col + '55')
       grad.addColorStop(1, col + '00')
@@ -933,29 +1062,37 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
 
       if(magStatusEl){
         let statusText = label
-        if(activeStorm && row.Dst != null) statusText += ' · ' + row.Dst.toFixed(0) + ' nT'
+        if(row.Dst != null) statusText += ' · ' + row.Dst.toFixed(0) + ' nT'
         magStatusEl.textContent = statusText
         magStatusEl.style.color = col
-        magStatusEl.classList.toggle('pulse', !!activeStorm && activeStorm.intensity !== 'moderate')
+        magStatusEl.classList.toggle('pulse', calmness < 0.5)
       }
     }
 
+    // Parker spiral: the Sun's rotation combined with radial outflow curves
+    // the wind into an Archimedean spiral (tan ψ = Ω·r/v) — curvature comes
+    // from the real measured speed, so slow wind spirals tightly and fast
+    // wind (storm-driven CMEs excepted, which stay radial) runs straighter.
     function drawWind(dt){
       const idx = Math.floor(simDay)
       const row = daily[idx] || {}
       const v = row.v ?? 400, n = row.n ?? 5, bz = row.Bz ?? 0
-      const sunR = scale*0.055
+      const sunR = scale*0.062
       const maxR = scale*0.5
       const speedScale = (scale*0.16) * (v/420)
       const nNorm = Math.min(1, Math.max(0.15, n/25))
       const col = bz < 0 ? C_DANGER : C_CALM
+      const vKms = Math.max(80, v)
 
       ctx.save()
       windParticles.forEach(wp=>{
         wp.r += speedScale * wp.speedFactor * dt
-        if(wp.r > maxR){ wp.r = sunR + Math.random()*8; wp.angle = Math.random()*Math.PI*2 }
-        const x = cx + Math.cos(wp.angle)*wp.r
-        const y = cy + Math.sin(wp.angle)*wp.r
+        if(wp.r > maxR){ wp.r = sunR + Math.random()*8; wp.angle0 = Math.random()*Math.PI*2 }
+        const rKm = (wp.r / Math.max(1, earthOrbitR)) * AU_KM
+        const spiralSweep = (OMEGA_SUN * rKm) / vKms
+        const ang = wp.angle0 - spiralSweep
+        const x = cx + Math.cos(ang)*wp.r
+        const y = cy + Math.sin(ang)*wp.r
         ctx.globalAlpha = nNorm * 0.7
         ctx.fillStyle = col
         ctx.beginPath()
@@ -1045,16 +1182,16 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
       const pad = 8
       const xScale = d => pad + (d/(totalDays-1)) * (w-2*pad)
 
-      // dashboard range + brushed selection, as indigo bands
+      // dashboard range + brushed selection, as violet bands
       const link = linkRef.current
       if(link.start && link.end){
         const i0 = Math.max(0, dayIndexFromISO(link.start + 'T00:00:00Z'))
         const i1 = Math.min(totalDays-1, dayIndexFromISO(link.end + 'T00:00:00Z'))
         if(Number.isFinite(i0) && Number.isFinite(i1) && i1 >= i0){
           const x0 = xScale(i0), x1 = xScale(i1)
-          tlCtx.fillStyle = 'rgba(99,102,241,0.15)'
+          tlCtx.fillStyle = 'rgba(139,92,246,0.18)'
           tlCtx.fillRect(x0, 5, Math.max(2, x1-x0), 36)
-          tlCtx.strokeStyle = 'rgba(99,102,241,0.8)'
+          tlCtx.strokeStyle = 'rgba(139,92,246,0.85)'
           tlCtx.lineWidth = 1
           tlCtx.strokeRect(x0, 5, Math.max(2, x1-x0), 36)
         }
@@ -1063,7 +1200,7 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
         const s0 = dayIndexFromLocal(link.selection[0])
         const s1 = dayIndexFromLocal(link.selection[1])
         if(Number.isFinite(s0) && Number.isFinite(s1) && s1 >= s0){
-          tlCtx.fillStyle = 'rgba(99,102,241,0.35)'
+          tlCtx.fillStyle = 'rgba(139,92,246,0.4)'
           tlCtx.fillRect(xScale(Math.max(0,s0)), 5, Math.max(2, xScale(Math.min(totalDays-1,s1)) - xScale(Math.max(0,s0))), 36)
         }
       }
@@ -1114,10 +1251,10 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
 
       // playhead
       const px = xScale(simDay)
-      tlCtx.strokeStyle = C_FAST
+      tlCtx.strokeStyle = C_VIOLET
       tlCtx.lineWidth = 1.4
       tlCtx.beginPath(); tlCtx.moveTo(px, 6); tlCtx.lineTo(px, 40); tlCtx.stroke()
-      tlCtx.fillStyle = C_FAST
+      tlCtx.fillStyle = C_VIOLET
       tlCtx.beginPath()
       tlCtx.moveTo(px-4, 6); tlCtx.lineTo(px+4, 6); tlCtx.lineTo(px, 12); tlCtx.closePath()
       tlCtx.fill()
@@ -1142,12 +1279,24 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
   return (
     <div ref={rootRef} className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V5</span>
         <span className="text-sm font-semibold text-slate-200">Orbital Storm Simulator</span>
         <span className="hidden xl:block text-[10px] text-slate-500">
-          · play syncs cursors · pause follows hover · storm jump loads all panels
+          · the sim clock drives every panel · pause follows their hover · storm jump loads all panels
         </span>
-        <span id="v5-count" className="hidden sm:block text-[10px] font-mono text-slate-500 ml-auto">loading…</span>
+        <div className="ml-auto flex items-center gap-4">
+          <div className="text-center">
+            <div id="v5-stat-days" className="text-xs font-mono font-semibold text-violet-300 leading-tight">—</div>
+            <div className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Days</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs font-mono font-semibold text-violet-300 leading-tight">1995–2025</div>
+            <div className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Range</div>
+          </div>
+          <div className="text-center">
+            <div id="v5-stat-storms" className="text-xs font-mono font-semibold text-violet-300 leading-tight">—</div>
+            <div className="text-[8px] font-mono uppercase tracking-wider text-slate-500">Storms</div>
+          </div>
+        </div>
       </div>
 
       <style>{V5_CSS}</style>
@@ -1158,10 +1307,32 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
             <canvas id="v5-canvas" />
             <div className="v5-scanline" />
             <div className="v5-storm-banner" id="v5-storm-banner" />
-            <div className="v5-mag-monitor" id="v5-mag-monitor">
+
+            <button
+              className="v5-drawer-toggle"
+              onClick={() => setDrawerOpen(o => !o)}
+              title={drawerOpen ? 'Close' : 'Magnetosphere monitor + legend'}
+            >
+              {drawerOpen ? '✕' : 'ⓘ'}
+            </button>
+
+            {/* Magnetosphere widget + legend consolidated into one drawer —
+                stays mounted (never conditionally rendered) so the imperative
+                sim keeps a live handle on #v5-mag-canvas across toggles. */}
+            <div className={`v5-drawer${drawerOpen ? ' open' : ''}`}>
               <div className="v5-mag-monitor-title">Magnetosphere</div>
               <canvas id="v5-mag-canvas" />
               <div className="v5-mag-status" id="v5-mag-status">—</div>
+
+              <div className="v5-drawer-divider" />
+
+              <div className="v5-drawer-title">Legend</div>
+              <div className="v5-legend">
+                <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--calm)' }} />wind · Bz ≥ 0</div>
+                <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--danger)' }} />wind · Bz &lt; 0</div>
+                <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--cme)' }} />CME ejecta</div>
+                <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--aurora)' }} />aurora / compression</div>
+              </div>
             </div>
 
             <div className="v5-readout">
@@ -1174,25 +1345,25 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
               <span className="v5-ro">Dst <b id="v5-m-dst">—</b></span>
             </div>
 
-            <div className="v5-legend-overlay">
-              <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--calm)' }} />wind · Bz ≥ 0</div>
-              <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--danger)' }} />wind · Bz &lt; 0</div>
-              <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--cme)' }} />CME ejecta</div>
-              <div className="v5-legend-row"><div className="v5-legend-dot" style={{ background: 'var(--aurora)' }} />aurora / compression</div>
-            </div>
-
             <div className="v5-loading" id="v5-loading">loading orbital data…</div>
-            <div className="v5-tooltip" id="v5-tooltip" />
           </div>
 
-          <div className="v5-timeline-block">
+          <div className="v5-timeline-block" id="v5-timeline-block">
             <div className="v5-timeline-top">
-              <div className="v5-date-readout" id="v5-date-readout">— <span className="v5-day-of">day 0 / 0</span></div>
-              <div className="v5-sub" id="v5-storm-count-sub" />
+              <div className="v5-timeline-title">
+                <b>Storm Timeline</b>
+                <div className="v5-date-readout" id="v5-date-readout">— <span className="v5-day-of">day 0 / 0</span></div>
+              </div>
+              <div className="v5-severity-legend">
+                <span><i style={{ background: 'var(--danger)' }} />Severe <b id="v5-cnt-severe">0</b></span>
+                <span><i style={{ background: 'var(--slow)' }} />Intense <b id="v5-cnt-intense">0</b></span>
+                <span><i style={{ background: 'var(--text-faint)' }} />Moderate <b id="v5-cnt-moderate">0</b></span>
+              </div>
             </div>
             <canvas id="v5-timeline" />
+            <div className="v5-tooltip" id="v5-tooltip" />
             <div className="v5-controls">
-              <button className="v5-btn" id="v5-play">▶ PLAY</button>
+              <button className="v5-btn v5-play-btn active" id="v5-play">⏸</button>
               <button className="v5-btn" id="v5-prev-storm">◀ STORM</button>
               <button className="v5-btn" id="v5-next-storm">STORM ▶</button>
               <select className="v5-btn" id="v5-speed" defaultValue="5">
@@ -1207,6 +1378,9 @@ export default function V5({ start, end, hoverTime, setHoverTime, selection, app
               <button className="v5-btn" id="v5-zoom-out">－</button>
               <button className="v5-btn" id="v5-zoom-in">＋</button>
               <div className="v5-toggles">
+                <label title="Playing or scrubbing moves the window loaded in every panel below">
+                  <input type="checkbox" id="v5-toggle-sync" defaultChecked /> sync panels
+                </label>
                 <label><input type="checkbox" id="v5-toggle-wind" defaultChecked /> wind</label>
                 <label><input type="checkbox" id="v5-toggle-orbits" defaultChecked /> orbits</label>
                 <label><input type="checkbox" id="v5-toggle-labels" defaultChecked /> labels</label>

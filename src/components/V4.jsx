@@ -78,18 +78,31 @@ export default function V4({ data }) {
 );
 const [parameter, setParameter] = useState("pressure");
 const svgRef = useRef(null);
+const wrapRef = useRef(null);
 const [referenceStorm, setReferenceStorm] = useState(null);
+
+// Redraw when the grid cell resizes — the chart tracks its real container
+// size instead of stretching a fixed viewBox (which distorted axis text
+// once this panel started living in a narrow column).
+const [sizeTick, setSizeTick] = useState(0);
+useEffect(() => {
+  if (!wrapRef.current) return;
+  const ro = new ResizeObserver(() => setSizeTick(t => t + 1));
+  ro.observe(wrapRef.current);
+  return () => ro.disconnect();
+}, []);
 
 useEffect(() => {
 
-    if (!currentStorm) return;
+    if (!currentStorm || !wrapRef.current) return;
 
     const svg = d3.select(svgRef.current);
 
     svg.selectAll("*").remove();
 
-    const width = 700;
-    const height = 180;
+    const width = wrapRef.current.clientWidth || 700;
+    const height = wrapRef.current.clientHeight || 180;
+    svg.attr("width", width).attr("height", height);
 
     const margin = {
         top: 10,
@@ -212,7 +225,7 @@ if (referenceStorm) {
         .attr("x2", x(0))
         .attr("y1", margin.top)
         .attr("y2", height - margin.bottom)
-        .attr("stroke", "#6366f1")
+        .attr("stroke", "#8b5cf6")
         .attr("stroke-width", 2);
     // X Axis
 const xAxis = d3.axisBottom(x)
@@ -221,10 +234,10 @@ const xAxis = d3.axisBottom(x)
 svg.append("g")
     .attr("transform", `translate(0,${height - margin.bottom})`)
     .call(xAxis)
-    .call(g => g.select(".domain").attr("stroke", "#475569"))
-    .call(g => g.selectAll("line").attr("stroke", "#475569"))
+    .call(g => g.select(".domain").attr("stroke", "#334155"))
+    .call(g => g.selectAll("line").attr("stroke", "#334155"))
     .call(g => g.selectAll("text")
-        .attr("fill", "#94a3b8")
+        .attr("fill", "#64748b")
         .style("font-size", "10px"));
 svg.append("text")
     .attr("x", width / 2)
@@ -241,10 +254,10 @@ const yAxis = d3.axisLeft(y)
 svg.append("g")
     .attr("transform", `translate(${margin.left},0)`)
     .call(yAxis)
-    .call(g => g.select(".domain").attr("stroke", "#475569"))
-    .call(g => g.selectAll("line").attr("stroke", "#475569"))
+    .call(g => g.select(".domain").attr("stroke", "#334155"))
+    .call(g => g.selectAll("line").attr("stroke", "#334155"))
     .call(g => g.selectAll("text")
-        .attr("fill", "#94a3b8")
+        .attr("fill", "#64748b")
         .style("font-size", "10px"));
 svg.append("text")
     .attr("transform", "rotate(-90)")
@@ -261,7 +274,7 @@ svg.append("text")
             : "nT"
     );
 
-}, [currentStorm,referenceStorm, parameter]); 
+}, [currentStorm, referenceStorm, parameter, sizeTick]);
 
 
 
@@ -270,79 +283,56 @@ svg.append("text")
 
       {/* ================= HEADER ================= */}
 
-      <div className="border-b border-slate-800 px-3 py-2 bg-slate-900/60">
+      <div className="border-b border-slate-800 px-3 py-1.5 bg-slate-900/60">
 
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
 
-          <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-slate-200 truncate" title="Storm Event Inspector — 72 h comparison against a saved reference storm">
+            Storm Inspector
+          </span>
 
-            <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">
-              V4
-            </span>
+          <div className="ml-auto flex flex-none gap-1.5">
 
-            <span className="text-sm font-semibold text-slate-200">
-              Storm Event Inspector
-            </span>
+            <button
+              onClick={() => currentStorm && setReferenceStorm(currentStorm)}
+              title="Save the current storm as the dashed reference overlay"
+              className="px-2 py-1 text-[10px] whitespace-nowrap rounded bg-violet-600 hover:bg-violet-500 text-white transition"
+            >
+              Set Reference
+            </button>
+
+            <button
+              onClick={() => setReferenceStorm(null)}
+              title="Clear the reference overlay"
+              className="px-2 py-1 text-[10px] whitespace-nowrap rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 transition"
+            >
+              Clear
+            </button>
 
           </div>
 
-          <div className="ml-auto flex gap-2">
-
-            <button
-    onClick={() => currentStorm && setReferenceStorm(currentStorm)}
-    className="px-2 py-1 text-[10px] rounded bg-indigo-600 hover:bg-indigo-500 text-white transition"
->
-    Set Current
-</button>
-
-            <button
-    onClick={() => setReferenceStorm(null)}
-    className="px-2 py-1 text-[10px] rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 transition"
->
-    Clear
-</button>
-
-          </div>
-
-        </div>
-
-        <div className="mt-1 text-[10px] text-slate-500">
-          <div className="flex items-center gap-2 mt-1">
-
-<select
-
-value={parameter}
-
-onChange={(e)=>setParameter(e.target.value)}
-
-className="bg-slate-800 text-[10px] border border-slate-700 rounded px-2 py-0.5"
-
->
-
-<option value="pressure">Pressure</option>
-
-<option value="bz">IMF Bz</option>
-
-<option value="sym">SYM/H</option>
-
-</select>
-
-<span className="text-[10px] text-slate-500">
-
-72 h comparison
-
-</span>
-
-</div>
         </div>
 
       </div>
 
-      {/* ================= STORM INFO ================= */}
+      {/* ================= PARAMETER + STORM INFO (one compact row) ================= */}
 
-     <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2 text-xs">
+     <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-1.5 text-xs">
 
-  <div className="flex items-center gap-2">
+  <select
+    value={parameter}
+    onChange={(e)=>setParameter(e.target.value)}
+    title="72-hour window from shock arrival"
+    className="bg-slate-800 text-[10px] border border-slate-700 rounded px-2 py-0.5 flex-none"
+  >
+    <option value="pressure">Pressure</option>
+    <option value="bz">IMF Bz</option>
+    <option value="sym">SYM/H</option>
+  </select>
+
+  <div className="flex items-center gap-3">
+
+  <div className="flex items-center gap-1.5">
     <span className="w-2 h-2 rounded-full bg-red-500" />
     <span className="text-slate-500">Ref</span>
     <span className="text-slate-200">
@@ -363,7 +353,7 @@ new Date(referenceStorm.startTime).toLocaleDateString(
 </span>
   </div>
 
-  <div className="flex items-center gap-2">
+  <div className="flex items-center gap-1.5">
     <span
       className={`w-2 h-2 rounded-full ${
         currentStorm ? "bg-green-500" : "bg-slate-500"
@@ -383,33 +373,26 @@ new Date(referenceStorm.startTime).toLocaleDateString(
     </span>
   </div>
 
+  </div>
+
 </div>
 
       {/* ================= METRICS ================= */}
 
-<div className="flex items-center justify-center gap-6 border-b border-slate-800 py-2 text-xs">
-
-  <div className="flex items-center gap-1">
-    <span className="text-slate-500">Max P</span>
-    <span className="font-semibold text-yellow-400">
-      {currentStorm ? currentStorm.peakPressure.toFixed(1) : "—"}
-    </span>
-  </div>
-
-  <div className="flex items-center gap-1">
-    <span className="text-slate-500">Min Bz</span>
-    <span className="font-semibold text-red-400">
-      {currentStorm ? currentStorm.minBz.toFixed(1) : "—"}
-    </span>
-  </div>
-
-  <div className="flex items-center gap-1">
-    <span className="text-slate-500">Min SYM</span>
-    <span className="font-semibold text-sky-400">
-      {currentStorm ? currentStorm.minSymH.toFixed(1) : "—"}
-    </span>
-  </div>
-
+<div className="grid grid-cols-3 gap-1.5 px-2 py-1 border-b border-slate-800">
+  {[
+    { label: "Max Pressure", unit: "nPa", cls: "text-yellow-400", value: currentStorm ? currentStorm.peakPressure.toFixed(1) : "—" },
+    { label: "Min Bz",       unit: "nT",  cls: "text-red-400",    value: currentStorm ? currentStorm.minBz.toFixed(1) : "—" },
+    { label: "Min SYM-H",    unit: "nT",  cls: "text-sky-400",    value: currentStorm ? currentStorm.minSymH.toFixed(1) : "—" },
+  ].map(m => (
+    <div key={m.label} className="rounded-lg bg-slate-800/60 border border-slate-800 text-center py-1">
+      <div className="text-[9px] uppercase tracking-wider text-slate-500">{m.label}</div>
+      <div className={`text-sm font-semibold leading-tight ${m.cls}`}>
+        {m.value}
+        <span className="ml-1 text-[9px] font-normal text-slate-500">{m.unit}</span>
+      </div>
+    </div>
+  ))}
 </div>
 
       {/* ================= PLOTS ================= */}
@@ -444,13 +427,11 @@ w-px bg-indigo-500 z-20"
 
 </div>
        */}
-       <div className="flex-1 relative bg-[#050d1a]">
+       <div ref={wrapRef} className="flex-1 min-h-0 relative bg-[#050d1a] overflow-hidden">
 
     <svg
         ref={svgRef}
-        viewBox="0 0 700 180"
-        className="w-full h-full"
-        preserveAspectRatio="none"
+        style={{ display: 'block' }}
     />
 
 </div>

@@ -2,14 +2,14 @@ import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 
 const PANELS = [
-  { key: 'flow_speed_kms',     label: 'SW Speed (km/s)', color: '#4ade80' },
-  { key: 'proton_density_ncc', label: 'Density (n/cc)',  color: '#60a5fa' },
-  { key: 'bz_gsm_nT',         label: 'IMF Bz (nT)',     color: '#f87171', zeroline: true },
-  { key: 'pdyn_computed_nPa',  label: 'Pdyn (nPa)',      color: '#fbbf24' },
+  { key: 'flow_speed_kms',     label: 'Speed',   unit: 'km/s', color: '#4ade80' },
+  { key: 'proton_density_ncc', label: 'Density', unit: 'n/cc', color: '#60a5fa' },
+  { key: 'bz_gsm_nT',          label: 'Bz',      unit: 'nT',   color: '#f87171', zeroline: true },
+  { key: 'pdyn_computed_nPa',  label: 'Pdyn',    unit: 'nPa',  color: '#fbbf24' },
 ]
 
-const MARGIN  = { top: 8, right: 20, bottom: 36, left: 82 }
-const PANEL_GAP = 5
+const MARGIN  = { top: 8, right: 20, bottom: 36, left: 46 }
+const PANEL_GAP = 10
 
 export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHoverTime, selection, setSelection }) {
   const svgRef  = useRef(null)
@@ -74,18 +74,30 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
       const pad = (yMax - yMin) * 0.08 || 1
       const yScale = d3.scaleLinear().domain([yMin - pad, yMax + pad]).range([PANEL_H, 0])
 
+      // Pick tick values that won't crowd the panel's own top/bottom edge —
+      // a label right at y=0 or y=PANEL_H would bleed into the next panel
+      // across the narrow gap between them.
+      const tickCount = PANEL_H < 45 ? 2 : 3
+      const EDGE_MARGIN = 7
+      const rawTicks = yScale.ticks(tickCount)
+      const yTickValues = rawTicks.filter(v => {
+        const py = yScale(v)
+        return py > EDGE_MARGIN && py < PANEL_H - EDGE_MARGIN
+      })
+      if (!yTickValues.length) yTickValues.push(...rawTicks)
+
       // Panel background
       g.append('rect')
         .attr('width', W).attr('height', PANEL_H)
-        .attr('fill', '#050d1a').attr('rx', 3)
+        .attr('fill', '#0E1117').attr('rx', 3)
 
-      // Storm shading
+      // Storm shading — violet, so it never blends into the red Bz line
       stormIntervals.forEach(([s, e]) => {
         g.append('rect')
           .attr('x', xScale(s)).attr('y', 0)
           .attr('width', Math.max(1, xScale(e) - xScale(s)))
           .attr('height', PANEL_H)
-          .attr('fill', 'rgba(239,68,68,0.18)')
+          .attr('fill', 'rgba(168,85,247,0.14)')
       })
 
       // Zero line (Bz only)
@@ -93,14 +105,14 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
         const y0 = yScale(0)
         g.append('line')
           .attr('x1', 0).attr('x2', W).attr('y1', y0).attr('y2', y0)
-          .attr('stroke', '#475569').attr('stroke-dasharray', '4,3').attr('stroke-width', 1)
+          .attr('stroke', '#252B3A').attr('stroke-dasharray', '4,3').attr('stroke-width', 1)
       }
 
       // Grid lines
       g.append('g')
-        .call(d3.axisLeft(yScale).ticks(3).tickSize(-W).tickFormat(''))
+        .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(-W).tickFormat(''))
         .call(ax => ax.select('.domain').remove())
-        .call(ax => ax.selectAll('.tick line').attr('stroke', '#0f1f35').attr('stroke-width', 1))
+        .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-width', 1))
 
       // Line
       const line = d3.line()
@@ -129,42 +141,23 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
         hoverCircle
       })
 
-      // Y axis ticks
+      // Y axis ticks — dimmed so the data lines stay the brightest pixels
       g.append('g')
-        .call(d3.axisLeft(yScale).ticks(3).tickSize(4))
+        .call(d3.axisLeft(yScale).tickValues(yTickValues).tickSize(4))
         .call(ax => ax.select('.domain').remove())
-        .call(ax => ax.selectAll('.tick line').attr('stroke', '#334155'))
+        .call(ax => ax.selectAll('.tick line').attr('stroke', '#252B3A'))
         .call(ax => ax.selectAll('.tick text')
-          .attr('fill', '#94a3b8').attr('font-size', 9).attr('dx', -2))
-
-      // Row label (left of margin)
-      svg.append('text')
-        .attr('x', MARGIN.left - 6)
-        .attr('y', yTop + PANEL_H / 2)
-        .attr('text-anchor', 'end')
-        .attr('dominant-baseline', 'middle')
-        .attr('fill', panel.color)
-        .attr('font-size', 10)
-        .attr('font-family', 'ui-monospace, monospace')
-        .text(panel.label)
+          .attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 9).attr('dx', -2))
     })
 
-    // Shared X axis
+    // Shared X axis — dimmed so the data lines stay the brightest pixels
     const xAxisY = MARGIN.top + n * PANEL_H + (n - 1) * PANEL_GAP
     svg.append('g')
       .attr('transform', `translate(${MARGIN.left},${xAxisY})`)
-      .call(d3.axisBottom(xScale).ticks(8))
-      .call(ax => ax.select('.domain').attr('stroke', '#334155'))
-      .call(ax => ax.selectAll('.tick line').attr('stroke', '#334155'))
-      .call(ax => ax.selectAll('.tick text').attr('fill', '#64748b').attr('font-size', 10))
-
-    // Storm legend
-    if (stormIntervals.length) {
-      const lg = svg.append('g').attr('transform', `translate(${MARGIN.left + W - 160},${MARGIN.top + 4})`)
-      lg.append('rect').attr('width', 10).attr('height', 10).attr('fill', 'rgba(239,68,68,0.4)').attr('rx', 2)
-      lg.append('text').attr('x', 14).attr('y', 9).attr('fill', '#f87171').attr('font-size', 9)
-        .text('Storm period (Dst < −50 nT)')
-    }
+      .call(d3.axisBottom(xScale).ticks(Math.max(3, Math.round(W / 110))))
+      .call(ax => ax.select('.domain').attr('stroke', '#252B3A'))
+      .call(ax => ax.selectAll('.tick line').attr('stroke', '#252B3A'))
+      .call(ax => ax.selectAll('.tick text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 10))
     //--------------------------------------------------
     // Hover Layer
     //--------------------------------------------------
@@ -178,14 +171,14 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
 
     const selectionRect = svg.append("rect")
         .attr("display", "none")
-        .attr("fill", "rgba(99,102,241,0.18)")
-        .attr("stroke", "#6366f1")
+        .attr("fill", "rgba(139,92,246,0.20)")
+        .attr("stroke", "#8b5cf6")
         .attr("stroke-width", 2)
 
     const hoverLine = svg.append('line')
       .attr('y1', MARGIN.top)
       .attr('y2', xAxisY)
-      .attr('stroke', '#94a3b8')
+      .attr('stroke', '#7C8496')
       .attr('stroke-width', 1)
       .attr('stroke-dasharray', '4,3')
       .style('display', 'none')
@@ -194,20 +187,21 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
       .append('div')
       .style('position', 'absolute')
       .style('pointer-events', 'none')
-      .style('background', '#0f172a')
-      .style('border', '1px solid #334155')
+      .style('background', '#12151C')
+      .style('border', '1px solid #252B3A')
       .style('border-radius', '6px')
       .style('padding', '8px')
+      .style('font-family', "'JetBrains Mono', monospace")
       .style('font-size', '11px')
-      .style('color', '#e2e8f0')
+      .style('color', '#E7EAF0')
       .style('opacity', 0)
 
     // Persistent band showing the shared selection (drawn by the selection effect)
     const persistBand = svg.append("rect")
         .attr("y", MARGIN.top)
         .attr("height", xAxisY - MARGIN.top)
-        .attr("fill", "rgba(99,102,241,0.10)")
-        .attr("stroke", "#6366f1")
+        .attr("fill", "rgba(139,92,246,0.12)")
+        .attr("stroke", "#8b5cf6")
         .attr("stroke-dasharray", "3,3")
         .style("display", "none")
 
@@ -270,14 +264,12 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
 
         tooltip
         .style("opacity", 1)
-        .style("left", `${event.offsetX + 20}px`)
-        .style("top", `${event.offsetY - 20}px`)
         .html(`
           <div style="font-weight:600;margin-bottom:6px;">
-            ${d.t.toLocaleString()}
+            ${d.t.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
           </div>
 
-          <hr style="border-color:#334155;margin:4px 0"/>
+          <hr style="border-color:#252B3A;margin:4px 0"/>
 
           <b>Solar Wind</b><br/>
           Speed : ${d.flow_speed_kms?.toFixed(1) ?? "--"} km/s<br/>
@@ -301,6 +293,19 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
           ${d.storm_flag ? "🔴 Yes" : "🟢 No"}
 
         `)
+
+        // Clamp so the tooltip never gets cut off by the panel's own
+        // overflow-hidden — flip to the other side of the cursor instead.
+        const wrapEl = wrapRef.current
+        const node = tooltip.node()
+        const tw = node.offsetWidth, th = node.offsetHeight
+        let left = event.offsetX + 18
+        let top = event.offsetY - th - 16
+        if (left + tw > wrapEl.clientWidth) left = event.offsetX - tw - 18
+        if (left < 4) left = 4
+        if (top < 4) top = event.offsetY + 16
+        if (top + th > wrapEl.clientHeight) top = wrapEl.clientHeight - th - 4
+        tooltip.style("left", `${left}px`).style("top", `${top}px`)
 
       })
 
@@ -485,20 +490,31 @@ export default function V1({ data, setDraftStart, setDraftEnd, hoverTime, setHov
   }, [selection, data])
 
   return (
-    <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      {/* Panel header */}
-      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V1</span>
-        <span className="text-sm font-semibold text-slate-200">Time-Series Overview</span>
-        <span className="hidden sm:block text-[10px] text-slate-500 ml-auto">
-          Drag selects · dbl-click clears · hover syncs
-        </span>
+    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+      {/* Panel header with unified series legend */}
+      <div
+        className="flex-none flex items-center flex-wrap gap-x-2 gap-y-0.5 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60"
+        title="Drag to select a range · double-click to clear · hover syncs all panels"
+      >
+        <span className="text-sm font-semibold text-space-text">Solar Wind Parameters</span>
+        <div className="flex items-center flex-wrap gap-x-2.5 gap-y-0.5 ml-auto font-mono">
+          {PANELS.map(p => (
+            <span key={p.key} title={`${p.label} (${p.unit})`} className="flex items-center gap-1 text-[10px] text-space-dim whitespace-nowrap">
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: p.color }} />
+              {p.label}
+            </span>
+          ))}
+          <span className="flex items-center gap-1 text-[10px] text-space-dim whitespace-nowrap">
+            <span className="inline-block w-2 h-2 rounded-sm" style={{ background: 'rgba(168,85,247,0.55)' }} />
+            Storm
+          </span>
+        </div>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
       <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
         {!data?.length
-          ? <div className="flex items-center justify-center h-full text-slate-500 text-sm">Waiting for data…</div>
+          ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">Waiting for data…</div>
           : <svg ref={svgRef} style={{ display: 'block' }} />
         }
       </div>
