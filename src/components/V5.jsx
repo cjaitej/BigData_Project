@@ -186,9 +186,12 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
       const F = frameRef.current
       if (!F) return
 
-      const cx = W * 0.56, cy = H / 2
-      const pxRe = Math.min(H / 2 - 34, W * 0.30) / RE.GEO
-      const sunX = 46, sunR = 20
+      const cx = W * 0.58, cy = H / 2
+      // 0.7× scene scale: shrinks Earth + every shell so the Sun can read
+      // as the dominant body (the real ratio is ~109:1 — undrawable, but
+      // Earth shouldn't dwarf the Sun as it used to).
+      const pxRe = 0.7 * Math.min(H / 2 - 34, W * 0.30) / RE.GEO
+      const sunX = 128, sunR = Math.min(84, H * 0.11)
       const aeN = F.noData ? 0 : (F.row.ae_norm ?? 0)
 
       drawSun(ctx, sunX, cy, sunR, clock)
@@ -497,36 +500,60 @@ function drawStars(ctx, W, H, clock) {
   }
 }
 
+// Cheap deterministic hash → [0,1), for granulation/sunspot placement
+// without storing state.
+const frac = x => x - Math.floor(x)
+const hash1 = i => frac(Math.sin(i * 12.9898) * 43758.5453)
+
 function drawSun(ctx, sx, sy, r, clock) {
-  const pulse = 1 + 0.03 * Math.sin(clock * 1.3)
-  const corona = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, r * 5.2)
-  corona.addColorStop(0, 'rgba(255,196,120,0.30)')
-  corona.addColorStop(0.35, 'rgba(255,150,80,0.14)')
+  const pulse = 1 + 0.02 * Math.sin(clock * 1.3)
+
+  // Outer corona — kept tighter than before so a big Sun doesn't wash the scene
+  const corona = ctx.createRadialGradient(sx, sy, r * 0.9, sx, sy, r * 3.0)
+  corona.addColorStop(0, 'rgba(255,190,110,0.28)')
+  corona.addColorStop(0.4, 'rgba(255,145,70,0.12)')
   corona.addColorStop(1, 'rgba(255,120,60,0)')
   ctx.fillStyle = corona
-  ctx.beginPath(); ctx.arc(sx, sy, r * 5.2, 0, 2 * Math.PI); ctx.fill()
+  ctx.beginPath(); ctx.arc(sx, sy, r * 3.0, 0, 2 * Math.PI); ctx.fill()
 
-  const glow = ctx.createRadialGradient(sx, sy, r * 0.2, sx, sy, r * 2.2 * pulse)
-  glow.addColorStop(0, 'rgba(255,230,180,0.9)')
-  glow.addColorStop(0.5, 'rgba(255,170,80,0.35)')
+  const glow = ctx.createRadialGradient(sx, sy, r * 0.4, sx, sy, r * 1.6 * pulse)
+  glow.addColorStop(0, 'rgba(255,235,190,0.85)')
+  glow.addColorStop(0.6, 'rgba(255,170,80,0.30)')
   glow.addColorStop(1, 'rgba(255,120,60,0)')
   ctx.fillStyle = glow
-  ctx.beginPath(); ctx.arc(sx, sy, r * 2.2 * pulse, 0, 2 * Math.PI); ctx.fill()
+  ctx.beginPath(); ctx.arc(sx, sy, r * 1.6 * pulse, 0, 2 * Math.PI); ctx.fill()
 
-  const disc = ctx.createRadialGradient(sx - r * 0.3, sy - r * 0.3, r * 0.1, sx, sy, r)
-  disc.addColorStop(0, '#fff6de')
-  disc.addColorStop(0.45, '#ffd27a')
-  disc.addColorStop(0.8, '#ff9a4d')
-  disc.addColorStop(1, '#ff7a3d')
+  // Photosphere with limb darkening — bright white-yellow core falling to a
+  // deep orange rim (real solar discs darken toward the edge).
+  const disc = ctx.createRadialGradient(sx, sy, r * 0.05, sx, sy, r)
+  disc.addColorStop(0, '#fffbe9')
+  disc.addColorStop(0.35, '#ffedad')
+  disc.addColorStop(0.7, '#ffc25e')
+  disc.addColorStop(0.92, '#f78a2e')
+  disc.addColorStop(1, '#d96a1c')
   ctx.save()
   ctx.shadowColor = 'rgba(255,170,90,0.85)'
-  ctx.shadowBlur = 24
+  ctx.shadowBlur = 30
   ctx.fillStyle = disc
   ctx.beginPath(); ctx.arc(sx, sy, r, 0, 2 * Math.PI); ctx.fill()
   ctx.restore()
 
+  // Granulation + a few sunspots, clipped to the disc; drifts very slowly.
+  ctx.save()
+  ctx.beginPath(); ctx.arc(sx, sy, r * 0.985, 0, 2 * Math.PI); ctx.clip()
+  for (let i = 0; i < 22; i++) {
+    const a = hash1(i) * 2 * Math.PI + clock * 0.01
+    const d = Math.sqrt(hash1(i + 40)) * 0.9
+    const gx = sx + Math.cos(a) * d * r
+    const gy = sy + Math.sin(a) * d * r
+    const gr = r * (0.05 + 0.09 * hash1(i + 80))
+    ctx.fillStyle = i % 6 === 0 ? 'rgba(150,70,20,0.20)' : 'rgba(220,130,50,0.10)'
+    ctx.beginPath(); ctx.arc(gx, gy, gr, 0, 2 * Math.PI); ctx.fill()
+  }
+  ctx.restore()
+
   ctx.fillStyle = 'rgba(255,220,180,0.85)'
-  ctx.fillText('Sun', sx - 10, sy + r + 16)
+  ctx.fillText('Sun', sx - 10, sy + r + 18)
 }
 
 // Flowing solar-wind streamlines, bent around the magnetopause nose.
@@ -583,36 +610,73 @@ function drawDipoleFieldLines(ctx, cx, cy, pxRe, aeN) {
 }
 
 function drawEarth(ctx, cx, cy, r, sunX) {
-  const rim = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.6)
+  const lit = sunX < cx ? -1 : 1   // -1: sun to the left → left side lit
+
+  // Atmosphere halo
+  const rim = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.5)
   rim.addColorStop(0, 'rgba(90,170,255,0.0)')
-  rim.addColorStop(0.75, 'rgba(90,170,255,0.22)')
+  rim.addColorStop(0.75, 'rgba(110,185,255,0.22)')
   rim.addColorStop(1, 'rgba(90,170,255,0)')
   ctx.fillStyle = rim
-  ctx.beginPath(); ctx.arc(cx, cy, r * 1.6, 0, 2 * Math.PI); ctx.fill()
+  ctx.beginPath(); ctx.arc(cx, cy, r * 1.5, 0, 2 * Math.PI); ctx.fill()
 
-  const lit = sunX < cx ? -1 : 1
-  const sphere = ctx.createRadialGradient(cx + lit * r * 0.45, cy - r * 0.35, r * 0.15, cx, cy, r * 1.05)
-  sphere.addColorStop(0, '#bfe4ff')
-  sphere.addColorStop(0.35, '#4f9dff')
-  sphere.addColorStop(0.7, '#1c4fa8')
-  sphere.addColorStop(1, '#08183f')
+  // Ocean sphere, lit from the sunward side
+  const sphere = ctx.createRadialGradient(cx + lit * r * 0.5, cy - r * 0.3, r * 0.1, cx, cy, r * 1.05)
+  sphere.addColorStop(0, '#d6efff')
+  sphere.addColorStop(0.3, '#5aa7ff')
+  sphere.addColorStop(0.65, '#1d55b0')
+  sphere.addColorStop(1, '#0a1c46')
   ctx.save()
-  ctx.shadowColor = 'rgba(79,216,255,0.5)'
-  ctx.shadowBlur = 14
+  ctx.shadowColor = 'rgba(79,216,255,0.45)'
+  ctx.shadowBlur = 12
   ctx.fillStyle = sphere
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.fill()
   ctx.restore()
 
   ctx.save()
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.clip()
-  ctx.fillStyle = 'rgba(90,200,140,0.55)'
+
+  // Landmasses
+  ctx.fillStyle = 'rgba(96,178,110,0.65)'
   for (const p of EARTH_SPECKLE) {
     ctx.beginPath()
     ctx.ellipse(cx + Math.cos(p.a) * p.d * r * 0.9, cy + Math.sin(p.a) * p.d * r * 0.9,
       r * p.rw, r * p.rh, p.a, 0, 2 * Math.PI)
     ctx.fill()
   }
+
+  // Polar caps
+  ctx.fillStyle = 'rgba(235,245,255,0.55)'
+  ctx.beginPath(); ctx.ellipse(cx, cy - r * 0.86, r * 0.34, r * 0.14, 0, 0, 2 * Math.PI); ctx.fill()
+  ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.88, r * 0.30, r * 0.12, 0, 0, 2 * Math.PI); ctx.fill()
+
+  // Cloud streaks
+  ctx.fillStyle = 'rgba(255,255,255,0.16)'
+  for (let i = 0; i < 5; i++) {
+    const yOff = (hash1(i + 3) - 0.5) * 1.5 * r
+    ctx.beginPath()
+    ctx.ellipse(cx + (hash1(i + 11) - 0.5) * r, cy + yOff, r * (0.4 + 0.3 * hash1(i)), r * 0.08, hash1(i) * 0.6 - 0.3, 0, 2 * Math.PI)
+    ctx.fill()
+  }
+
+  // Night side — dark terminator on the anti-sunward half
+  const night = ctx.createLinearGradient(cx + lit * r, cy, cx - lit * r, cy)
+  night.addColorStop(0, 'rgba(3,8,22,0)')
+  night.addColorStop(0.52, 'rgba(3,8,22,0.05)')
+  night.addColorStop(0.75, 'rgba(3,8,22,0.55)')
+  night.addColorStop(1, 'rgba(3,8,22,0.85)')
+  ctx.fillStyle = night
+  ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r)
+
   ctx.restore()
+
+  // Thin bright atmosphere arc on the lit rim
+  ctx.strokeStyle = 'rgba(170,225,255,0.5)'
+  ctx.lineWidth = Math.max(1, r * 0.05)
+  ctx.beginPath()
+  const mid = lit < 0 ? Math.PI : 0
+  ctx.arc(cx, cy, r * 1.01, mid - 0.85, mid + 0.85)
+  ctx.stroke()
 
   ctx.fillStyle = COL.dim
   ctx.fillText('Earth', cx - 14, cy + r + 16)

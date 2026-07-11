@@ -107,7 +107,12 @@ export default function App() {
     return () => clearInterval(id)
   }, [playing, playSpeed, data])
 
-  const playhead = (playing || playIdx > 0) ? (data[playIdx]?.datetime ?? null) : null
+  // The dashboard's "current moment" — simDate/simHour is the single source
+  // of truth (playback ticks write into it, so during playback this equals
+  // data[playIdx].datetime). Always non-null, so the time cursor in
+  // Time Series/Phase Space/Spectrogram is ALWAYS visible whenever the
+  // moment falls inside the loaded window — not only while playing.
+  const playhead = `${simDate}T${String(simHour).padStart(2, '0')}:00:00`
 
   function togglePlay() {
     if (!data.length) return
@@ -120,6 +125,10 @@ export default function App() {
     setSelectedStorm(null)
     setPlaying(false)
     setPlayIdx(0)
+    // Reset the dashboard's "current moment" too — it drives the time
+    // cursor in the charts and the Orbital snapshot.
+    setSimDate(DEFAULT_START)
+    setSimHour(0)
     // Restore the default date window too — after a storm jump reframed the
     // window, a "Reset" that left the charts sitting on the storm's dates
     // looked like it did nothing.
@@ -412,7 +421,7 @@ const panRight = () => {
         <div className="flex-none flex items-center justify-center gap-2 px-4 py-1.5 border-b border-space-hairline text-[11px] font-mono">
           <span className="text-space-faint">Linked selections:</span>
           {selectedStorm && (
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-fast/60 bg-space-fast/10 text-space-fast">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-aurora/60 bg-space-aurora/10 text-space-aurora">
               ⚡ {selectedStorm.start.slice(0, 10)} · {selectedStorm.intensity} storm
               <button
                 onClick={() => setSelectedStorm(null)}

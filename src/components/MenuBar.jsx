@@ -248,7 +248,12 @@ function Menu({ label, name, openMenu, onToggle, width, children }) {
           isOpen ? 'bg-space-panel-2 text-space-text border-space-fast' : 'text-space-dim hover:text-space-text hover:bg-space-panel-2 border-transparent'
         }`}
       >
-        {label} <span className="text-space-faint text-[9px]">▾</span>
+        {label}
+        {/* Real SVG chevron instead of the tiny ▾ glyph — inherits the
+            button's color, so it brightens on hover/open like the label. */}
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" className="mt-px">
+          <path d="M2.5 4.5 L6 8 L9.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
       {isOpen && (
         <div className={`absolute z-40 top-full left-0 mt-2 bg-space-panel border border-space-hairline rounded-xl shadow-2xl p-4 ${width}`}>

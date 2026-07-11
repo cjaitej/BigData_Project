@@ -92,7 +92,14 @@ export default function StormAnalysis({ selectedStorm, stormCatalog }) {
 
   // --- Comparison: 4 stacked shock-aligned mini-charts ---
   useEffect(() => {
-    if (!mainData || !compWrapRef.current) return
+    if (!compWrapRef.current) return
+    // Selection cleared: wipe the previous charts instead of leaving them
+    // ghosting under the translucent "pick a storm" overlay.
+    if (!mainData) {
+      d3.select(compSvgRef.current).selectAll('*').remove()
+      d3.select(compWrapRef.current).selectAll('div.sa-tooltip').remove()
+      return
+    }
 
     const svg = d3.select(compSvgRef.current)
     svg.selectAll('*').remove()
@@ -237,7 +244,11 @@ export default function StormAnalysis({ selectedStorm, stormCatalog }) {
 
   // --- Correlation: r vs lag curve ---
   useEffect(() => {
-    if (!curve || !curveSvgRef.current) return
+    if (!curveSvgRef.current) return
+    if (!curve) {
+      d3.select(curveSvgRef.current).selectAll('*').remove()
+      return
+    }
     const el = curveSvgRef.current.parentElement
     const W = el.clientWidth, H = el.clientHeight || 120
     const iw = W - CURVE_MARGIN.left - CURVE_MARGIN.right
@@ -283,7 +294,12 @@ export default function StormAnalysis({ selectedStorm, stormCatalog }) {
 
   // --- Correlation: Bz(t) vs Dst(t+lag) scatter ---
   useEffect(() => {
-    if (!mainData || !scatterWrapRef.current) return
+    if (!scatterWrapRef.current) return
+    if (!mainData) {
+      d3.select(scatterSvgRef.current).selectAll('*').remove()
+      d3.select(scatterWrapRef.current).selectAll('div.sa-corr-tooltip').remove()
+      return
+    }
     const W = scatterWrapRef.current.clientWidth
     const H = scatterWrapRef.current.clientHeight || 300
     const iw = W - SCATTER_MARGIN.left - SCATTER_MARGIN.right

@@ -162,11 +162,13 @@ export default function V3({ data, loading, selectedPoints, stormCatalog, onSele
       const x1 = MARGIN.left + xScale(t0), x2 = MARGIN.left + xScale(t1)
       const w = Math.max(1, x2 - x1)
 
+      // Violet outline = "storm period, clickable" — matches V1's violet
+      // storm shading; red stays reserved for danger/jump-control chrome.
       bandsG.append('rect')
         .attr('x', x1).attr('y', MARGIN.top)
         .attr('width', w).attr('height', chartH)
         .attr('fill', 'none')
-        .attr('stroke', 'rgba(239,68,68,0.55)')
+        .attr('stroke', 'rgba(139,92,246,0.65)')
         .attr('stroke-width', 1.2)
 
       const match = stormCatalog?.find(s => stripZ(s.start) <= raw1 && stripZ(s.end) >= raw0)
@@ -189,13 +191,13 @@ export default function V3({ data, loading, selectedPoints, stormCatalog, onSele
         bandsG.append('rect')
           .attr('x', px0).attr('y', MARGIN.top)
           .attr('width', Math.max(2, px1 - px0)).attr('height', chartH)
-          .attr('fill', 'rgba(67,217,200,0.25)')
-          .attr('stroke', '#43D9C8').attr('stroke-width', 2)
+          .attr('fill', 'rgba(92,242,160,0.22)')
+          .attr('stroke', '#5CF2A0').attr('stroke-width', 2)
         const midX = (px0 + px1) / 2
         const markerY = MARGIN.top + chartH + 3
         bandsG.append('path')
           .attr('d', `M${midX - 5},${markerY} L${midX + 5},${markerY} L${midX},${markerY - 6} Z`)
-          .attr('fill', '#43D9C8')
+          .attr('fill', '#5CF2A0')
       }
     }
 
@@ -331,33 +333,49 @@ export default function V3({ data, loading, selectedPoints, stormCatalog, onSele
         .text(`${match.intensity} storm · peak Dst ${match.peak_dst_nT} nT — click to open in Storm Analysis`)
     })
 
-    // Playback cursor (orange) — moved by the small playhead effect below
-    // without re-running this whole draw.
-    const playLine = svg.append('line')
+    // "Dashboard now" cursor (orange) — glow + core line + time label chip,
+    // moved by the small playhead effect below without re-running this draw.
+    const playG = svg.append('g').style('display', 'none')
+    playG.append('line')
       .attr('y1', MARGIN.top).attr('y2', MARGIN.top + chartH)
-      .attr('stroke', '#E8A33D').attr('stroke-width', 1.5)
-      .style('display', 'none')
+      .attr('stroke', '#E8A33D').attr('stroke-width', 7).attr('stroke-opacity', 0.22)
+    playG.append('line')
+      .attr('y1', MARGIN.top).attr('y2', MARGIN.top + chartH)
+      .attr('stroke', '#E8A33D').attr('stroke-width', 2.5)
+    const playLabelBg = playG.append('rect')
+      .attr('y', MARGIN.top + 3).attr('height', 15).attr('rx', 3)
+      .attr('fill', '#E8A33D')
+    const playLabel = playG.append('text')
+      .attr('y', MARGIN.top + 14.5)
+      .attr('fill', '#0A0C10').attr('font-size', 10).attr('font-weight', 700)
+      .attr('font-family', "'JetBrains Mono', monospace")
 
-    chartRef.current = { xScale, playLine }
+    chartRef.current = { xScale, playG, playLabel, playLabelBg, chartW }
 
   }, [data, selectedPoints, stormCatalog, onSelectStorm, selectedStorm, sizeTick])
 
   useEffect(() => {
     const r = chartRef.current
-    if (!r?.playLine) return
-    if (!playhead) { r.playLine.style('display', 'none'); return }
+    if (!r?.playG) return
+    if (!playhead) { r.playG.style('display', 'none'); return }
     const t = new Date(playhead)
     const [d0, d1] = r.xScale.domain()
-    if (t < d0 || t > d1) { r.playLine.style('display', 'none'); return }
-    const px = MARGIN.left + r.xScale(t)
-    r.playLine.style('display', null).attr('x1', px).attr('x2', px)
+    if (t < d0 || t > d1) { r.playG.style('display', 'none'); return }
+    const px = r.xScale(t)
+    r.playG.style('display', null).attr('transform', `translate(${MARGIN.left + px},0)`)
+    const text = d3.timeFormat('%d %b %H:00')(t)
+    r.playLabel.text(text)
+    const tw = r.playLabel.node().getComputedTextLength()
+    const flip = px + tw + 14 > r.chartW
+    r.playLabel.attr('x', flip ? -(tw + 8) : 8)
+    r.playLabelBg.attr('x', flip ? -(tw + 12) : 4).attr('width', tw + 8)
   }, [playhead, sizeTick, data])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
       {/* Panel header */}
       <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60">
-        <span className="text-sm font-semibold text-space-text" title="Fixed-domain parameter heatmap · red outline = storm period, click to inspect · violet ticks = points lassoed in Phase Space">Event Spectrogram</span>
+        <span className="text-sm font-semibold text-space-text" title="Fixed-domain parameter heatmap · violet outline = storm period, click to open in Storm Analysis · green band = selected storm · violet ticks = lassoed points · orange line = current time">Event Spectrogram</span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}

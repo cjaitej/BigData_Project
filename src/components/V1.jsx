@@ -117,13 +117,15 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
           .attr('fill', 'rgba(168,85,247,0.14)')
       })
 
-      // Selected-storm highlight (teal), per row.
+      // Selected-storm highlight, per row — aurora green, reserved solely
+      // for "the storm you picked" (teal is UI chrome, violet is lasso/storm
+      // context, orange is the now-cursor — each state owns one hue).
       if (selStormPx) {
         rg.append('rect')
           .attr('x', selStormPx[0]).attr('y', 0)
           .attr('width', Math.max(2, selStormPx[1] - selStormPx[0])).attr('height', CH_H)
-          .attr('fill', 'rgba(67,217,200,0.16)')
-          .attr('stroke', '#43D9C8').attr('stroke-width', 1.5)
+          .attr('fill', 'rgba(92,242,160,0.15)')
+          .attr('stroke', '#5CF2A0').attr('stroke-width', 1.5)
       }
 
       // Lasso-selection ticks (violet), per row.
@@ -244,12 +246,24 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
       .attr('stroke', '#4B5265').attr('stroke-width', 1)
       .style('display', 'none')
 
-    // Playback cursor (orange, distinct from hover crosshair + selections)
-    const playLine = g.append('line')
+    // "Dashboard now" cursor (orange, distinct from hover crosshair and the
+    // teal/violet selections): a soft glow line + crisp core line + a time
+    // label chip, grouped so the playhead effect just translates the group.
+    const playG = g.append('g').style('display', 'none')
+    playG.append('line')
       .attr('y1', 0).attr('y2', H)
-      .attr('stroke', '#E8A33D').attr('stroke-width', 1.5)
-      .style('display', 'none')
-    playRef.current = { xScale, playLine }
+      .attr('stroke', '#E8A33D').attr('stroke-width', 7).attr('stroke-opacity', 0.22)
+    playG.append('line')
+      .attr('y1', 0).attr('y2', H)
+      .attr('stroke', '#E8A33D').attr('stroke-width', 2.5)
+    const playLabelBg = playG.append('rect')
+      .attr('y', -1).attr('height', 15).attr('rx', 3)
+      .attr('fill', '#E8A33D')
+    const playLabel = playG.append('text')
+      .attr('y', 10.5)
+      .attr('fill', '#0A0C10').attr('font-size', 10).attr('font-weight', 700)
+      .attr('font-family', "'JetBrains Mono', monospace")
+    playRef.current = { xScale, playG, playLabel, playLabelBg, W }
 
     // Remove any tooltip left over from a prior run of this effect (resize,
     // new selection) — without this, a fresh div piles up on the DOM every
@@ -364,15 +378,23 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
   }, [data, selectedPoints, selectedStorm, sizeTick, setDraftStart, setDraftEnd])
 
-  // Move the playback cursor without re-running the (expensive) draw effect.
+  // Move the "dashboard now" cursor without re-running the draw effect.
   useEffect(() => {
     const r = playRef.current
     if (!r) return
-    if (!playhead) { r.playLine.style('display', 'none'); return }
+    if (!playhead) { r.playG.style('display', 'none'); return }
     const t = new Date(playhead)
     const [d0, d1] = r.xScale.domain()
-    if (t < d0 || t > d1) { r.playLine.style('display', 'none'); return }
-    r.playLine.style('display', null).attr('x1', r.xScale(t)).attr('x2', r.xScale(t))
+    if (t < d0 || t > d1) { r.playG.style('display', 'none'); return }
+    const px = r.xScale(t)
+    r.playG.style('display', null).attr('transform', `translate(${px},0)`)
+    // Label sits to the right of the line, flipping to the left near the edge.
+    const text = d3.timeFormat('%d %b %H:00')(t)
+    r.playLabel.text(text)
+    const tw = r.playLabel.node().getComputedTextLength()
+    const flip = px + tw + 14 > r.W
+    r.playLabel.attr('x', flip ? -(tw + 8) : 8)
+    r.playLabelBg.attr('x', flip ? -(tw + 12) : 4).attr('width', tw + 8)
   }, [playhead, sizeTick, data])
 
   return (

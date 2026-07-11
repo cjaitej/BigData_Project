@@ -187,15 +187,15 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
     const selSet = new Set(selectedPoints ?? [])
     const hasSel = selSet.size > 0
 
-    // Cross-highlight for the globally selected storm: its hours get a teal
-    // ring so a storm picked in the Spectrogram/Storm menu is visible here
-    // too. A lasso selection's white ring takes precedence when both apply.
+    // Cross-highlight for the globally selected storm: its hours get an
+    // aurora-green ring so a storm picked anywhere is visible here too.
+    // A lasso selection's white ring takes precedence when both apply.
     const storm0 = selectedStorm ? stripZ(selectedStorm.start) : null
     const storm1 = selectedStorm ? stripZ(selectedStorm.end) : null
     const inStorm = d => storm0 != null && storm0 <= d.datetime && d.datetime <= storm1
     const strokeFor = d => {
       if (hasSel && selSet.has(d.datetime)) return '#E7EAF0'
-      if (inStorm(d)) return '#43D9C8'
+      if (inStorm(d)) return '#5CF2A0'
       return 'none'
     }
 
@@ -204,9 +204,11 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .attr('cy', d => y(d.flow_speed_kms))
       .attr('r', 3.5)
       .attr('fill', d => d[ch.key] == null ? '#4B5265' : colorScale(d[ch.key]))
-      .attr('fill-opacity', d => hasSel ? (selSet.has(d.datetime) ? 0.9 : 0.12) : 0.75)
+      // De-emphasized (unselected during a lasso) dots stay clearly visible
+      // at 0.2 rather than vanishing at 0.12.
+      .attr('fill-opacity', d => hasSel ? (selSet.has(d.datetime) ? 0.95 : 0.2) : 0.75)
       .attr('stroke', strokeFor)
-      .attr('stroke-width', 1)
+      .attr('stroke-width', d => (hasSel && selSet.has(d.datetime)) ? 1.5 : 1)
 
     function positionTooltip(event) {
       const wrapEl = wrapRef.current
@@ -221,15 +223,26 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       tooltip.style('left', `${left}px`).style('top', `${top}px`)
     }
 
-    // Playback cursor: a bright ring around the point for the current
-    // playhead hour (position lookup via map, moved by the effect below).
+    // "Dashboard now" cursor: a glowing ring + center dot on the point for
+    // the current hour (position lookup via map, moved by the effect below).
     const byTime = new Map(parsed.map(d => [d.datetime, [x(d.proton_density_ncc), y(d.flow_speed_kms)]]))
-    const playDot = cursorGroup.append('circle')
-      .attr('r', 7)
-      .attr('fill', 'none')
-      .attr('stroke', '#E8A33D').attr('stroke-width', 2)
-      .style('display', 'none')
-    playRef.current = { byTime, playDot }
+    const playG = cursorGroup.append('g').style('display', 'none')
+    playG.append('circle')
+      .attr('r', 13).attr('fill', 'none')
+      .attr('stroke', '#E8A33D').attr('stroke-width', 6).attr('stroke-opacity', 0.25)
+    playG.append('circle')
+      .attr('r', 9).attr('fill', 'none')
+      .attr('stroke', '#E8A33D').attr('stroke-width', 2.5)
+    playG.append('circle')
+      .attr('r', 2.5).attr('fill', '#E8A33D')
+    // Always-visible "now" badge — the ring alone disappears when the
+    // current hour is a data gap (no dot to ring), which reads as "the
+    // time cursor is broken". The badge states the time and says so.
+    const playBadge = svg.append('text')
+      .attr('x', MARGIN.left + 8).attr('y', MARGIN.top + 16)
+      .attr('fill', '#E8A33D').attr('font-size', 10).attr('font-weight', 600)
+      .attr('font-family', "'JetBrains Mono', monospace")
+    playRef.current = { byTime, playG, playBadge }
 
     dots.on('mouseover', function (event, d) {
       d3.select(this).transition().duration(100).attr('r', 6).attr('stroke', '#E7EAF0').attr('stroke-width', 1.5)
@@ -247,7 +260,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .on('mouseout', function () {
         d3.select(this).transition().duration(100).attr('r', 3.5)
           .attr('stroke', strokeFor)
-          .attr('stroke-width', 1)
+          .attr('stroke-width', d => (hasSel && selSet.has(d.datetime)) ? 1.5 : 1)
         tooltip.style('opacity', 0)
       })
 
@@ -322,17 +335,36 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
 
   }, [data, sizeTick, channel, selectedPoints, onSelectPoints, selectedStorm])
 
-  // Move the playback ring without re-running the draw effect. Falls back to
-  // the day's midnight row in daily resolution (hourly playhead timestamps
-  // only match T00:00:00 rows there).
+  // Move the "dashboard now" ring without re-running the draw effect. Falls
+  // back to nearby hours (data gaps) and to the day's midnight row in daily
+  // resolution (hourly playhead timestamps only match T00:00:00 rows there).
   useEffect(() => {
     const r = playRef.current
     if (!r) return
-    const pos = playhead
-      ? (r.byTime.get(playhead) ?? r.byTime.get(playhead.slice(0, 10) + 'T00:00:00'))
-      : null
-    if (!pos) { r.playDot.style('display', 'none'); return }
-    r.playDot.style('display', null).attr('cx', pos[0]).attr('cy', pos[1])
+    let pos = null
+    if (playhead) {
+      pos = r.byTime.get(playhead)
+      if (!pos) {
+        const day = playhead.slice(0, 10)
+        const hour = Number(playhead.slice(11, 13))
+        for (let d = 1; d <= 3 && !pos; d++) {
+          for (const h of [hour - d, hour + d]) {
+            if (h < 0 || h > 23) continue
+            pos = r.byTime.get(`${day}T${String(h).padStart(2, '0')}:00:00`)
+            if (pos) break
+          }
+        }
+        if (!pos) pos = r.byTime.get(day + 'T00:00:00')
+      }
+    }
+    if (playhead) {
+      const label = d3.timeFormat('%d %b %H:00')(new Date(playhead))
+      r.playBadge.text(pos ? `now: ${label}` : `now: ${label} — no sample this hour (data gap)`)
+    } else {
+      r.playBadge.text('')
+    }
+    if (!pos) { r.playG.style('display', 'none'); return }
+    r.playG.style('display', null).attr('transform', `translate(${pos[0]},${pos[1]})`)
   }, [playhead, sizeTick, data])
 
   return (
