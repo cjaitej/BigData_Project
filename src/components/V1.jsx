@@ -502,7 +502,10 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
             else still fit. */}
         <span className="flex-none text-sm font-semibold text-space-text">Time Series</span>
 
-        <div className="flex-none flex items-center gap-2 font-mono text-[10px]">
+        {/* ml-auto here (not on the storm swatch) pushes this whole cluster
+            — pickers through the storm swatch — together toward the right,
+            away from the title, rather than hugging it. */}
+        <div className="ml-auto flex-none flex items-center gap-2 font-mono text-[10px]">
           {['Top', 'Bottom'].map((posLabel, i) => (
             <label key={posLabel} className="flex items-center gap-1 text-space-dim">
               {posLabel}
@@ -510,7 +513,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
                 value={rowKeys[i]}
                 onChange={e => setRowKey(i, e.target.value)}
                 style={{ color: paramByKey(rowKeys[i]).color }}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-[10px] font-semibold"
+                className="h-5 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-[10px] font-semibold"
               >
                 {PARAM_OPTIONS.map(p => (
                   <option key={p.key} value={p.key} style={{ color: p.color, background: '#12151C' }}>
@@ -530,7 +533,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
             value={cmpId}
             onChange={e => setCmpId(e.target.value)}
             title="Overlay another storm's curve — aligned to the main storm's shock if one is selected (⚠ jump control above), otherwise shown at its own real dates. The chart temporarily zooms to that comparison window while active."
-            className="h-6 max-w-48 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-dim text-[10px]"
+            className="h-5 w-32 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-dim text-[10px]"
           >
             <option value="">No comparison</option>
             {sortedCatalog.map(s => (
@@ -539,7 +542,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
           </select>
         </div>
 
-        <span className="ml-auto flex-none flex items-center gap-1 font-mono text-[9px] text-space-dim whitespace-nowrap">
+        <span className="flex-none flex items-center gap-1 font-mono text-[9px] text-space-dim whitespace-nowrap">
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgba(255,91,84,0.35)' }} />
           storm
         </span>

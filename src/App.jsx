@@ -115,13 +115,11 @@ export default function App() {
     setSelectedStorm(null)
     setPlaying(false)
     setPlayIdx(0)
-    // Reset the dashboard's "current moment" too — it drives the time
-    // cursor in the charts and the Orbital snapshot.
-    setSimDate(DEFAULT_START)
-    setSimHour(0)
     // Restore the default date window too — after a storm jump reframed the
     // window, a "Reset" that left the charts sitting on the storm's dates
-    // looked like it did nothing.
+    // looked like it did nothing. applyRange's default syncSim also resets
+    // the dashboard's "current moment" (simDate/simHour) to match, which
+    // drives the time cursor in the charts and the Orbital snapshot.
     applyRange(DEFAULT_START, DEFAULT_END)
     // applyRange already clears the lasso selection.
   }
@@ -143,6 +141,7 @@ export default function App() {
         applyRange(
           format(subDays(parseISO(s0), 3), 'yyyy-MM-dd'),
           format(addDays(parseISO(s1), 4), 'yyyy-MM-dd'),
+          { syncSim: false },
         )
       }
     }
@@ -162,8 +161,16 @@ export default function App() {
 
   // Every loaded-window change clears the lasso selection (points may fall
   // outside the new window) and rewinds/stops playback (the playhead indexes
-  // into the loaded rows) — but never touches selectedStorm/simDate/simHour.
-  const applyRange = (newStart, newEnd) => {
+  // into the loaded rows) — but never touches selectedStorm. It DOES sync
+  // simDate/simHour to the new range's start by default: without this, the
+  // Orbital Simulator kept showing whatever date it last had (even one
+  // outside the newly-loaded window entirely) until playback happened to
+  // tick past it — changing the Date Range, or applying a Time Series
+  // drag-selection, looked like it silently did nothing to that panel.
+  // jumpToStorm passes syncSim: false since it already points simDate at
+  // the storm's own peak time — the sync here would just clobber that with
+  // the reframed window's start instead.
+  const applyRange = (newStart, newEnd, { syncSim = true } = {}) => {
     setStart(newStart)
     setEnd(newEnd)
     setDraftStart(newStart)
@@ -171,6 +178,10 @@ export default function App() {
     setSelectedPoints([])
     setPlaying(false)
     setPlayIdx(0)
+    if (syncSim) {
+      setSimDate(newStart)
+      setSimHour(0)
+    }
   }
 
   // Esc anywhere clears the most recent cross-view selection: the lasso

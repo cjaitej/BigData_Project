@@ -273,7 +273,13 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
         ctx.restore()
 
         ctx.fillStyle = COL.faint
-        ctx.fillText(o, cx + (o === 'Polar' ? R * 0.35 : R) * 0.72 + 4, cy + R * 0.72)
+        // LEO and Polar's radii are nearly identical (1.06 vs 1.13 Re), so
+        // both labels landing on the same bottom-right diagonal collided.
+        // Polar's label goes to the top of its ellipse instead — it also
+        // reads better there physically (a pole-to-pole orbit's label next
+        // to a pole, not off to the side).
+        if (o === 'Polar') ctx.fillText(o, cx - 12, cy - R - 6)
+        else ctx.fillText(o, cx + R * 0.72 + 4, cy + R * 0.72)
 
         const shellLv = F.noData ? 'safe' : level(F.scores[o])
         for (const p of phases[o]) {
@@ -436,12 +442,17 @@ function ReadoutStrip({ frame }) {
   }
 
   const r = frame.row
+  // |B| (imf_mag_scalar_nT) and Pdyn were dropped from this readout: |B| has
+  // the smallest role of any value here (only a 0.15 weight in GEO's score,
+  // vs. AE's 0.30 and mpFactor's 0.55) and is largely redundant with Bz
+  // (already shown, and the more meaningful driver — the southward
+  // component, not just field magnitude); Pdyn doesn't appear in any
+  // shell's score directly, only indirectly via the magnetopause r₀ drawn
+  // on the canvas itself.
   const rows = [
     ['Bz', r.bz_gsm_nT?.toFixed(1), 'nT'],
-    ['|B|', r.imf_mag_scalar_nT?.toFixed(1), 'nT'],
     ['Speed', r.flow_speed_kms?.toFixed(0), 'km/s'],
     ['Density', r.proton_density_ncc?.toFixed(1), 'n/cc'],
-    ['Pdyn', r.pdyn_computed_nPa?.toFixed(1), 'nPa'],
     ['AE', r.ae_index_nT?.toFixed(0), 'nT'],
     ['Dst', r.dst_omni?.toFixed(0), 'nT'],
     ['Kp', r.kp, ''],
@@ -461,14 +472,20 @@ function ReadoutStrip({ frame }) {
 
       <div className="h-4 w-px bg-space-hairline" />
 
-      {ORBITS.map(o => {
-        const lv = level(frame.scores[o])
-        return (
-          <span key={o} className="px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap" style={{ color: LEVEL_COLOR[lv], background: `${LEVEL_COLOR[lv]}1a`, border: `1px solid ${LEVEL_COLOR[lv]}` }}>
-            {o} {LEVEL_TEXT[lv]} · {frame.scores[o].toFixed(2)}
-          </span>
-        )
-      })}
+      {/* Grouped in their own non-wrapping row so the outer flex-wrap moves
+          all 4 shell chips together — without this, the wrap could split
+          the set (e.g. LEO staying on line 1, Polar/MEO/GEO pushed to
+          line 2) whenever the row above them changed length. */}
+      <div className="flex items-center gap-1.5">
+        {ORBITS.map(o => {
+          const lv = level(frame.scores[o])
+          return (
+            <span key={o} className="px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap" style={{ color: LEVEL_COLOR[lv], background: `${LEVEL_COLOR[lv]}1a`, border: `1px solid ${LEVEL_COLOR[lv]}` }}>
+              {o} {LEVEL_TEXT[lv]} · {frame.scores[o].toFixed(2)}
+            </span>
+          )
+        })}
+      </div>
 
       {frame.mp.r0 < RE.GEO && (
         <span className="text-space-slow whitespace-nowrap">⚠ magnetopause inside GEO</span>

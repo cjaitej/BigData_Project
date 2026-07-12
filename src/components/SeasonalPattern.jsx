@@ -156,7 +156,7 @@ export default function SeasonalPattern({ start, end }) {
             <button
               key={m.key}
               onClick={() => setMetricKey(m.key)}
-              className={`px-2.5 py-1 text-[10px] transition-colors ${
+              className={`px-2.5 py-0.5 text-[10px] transition-colors ${
                 metricKey === m.key ? 'bg-space-violet text-white' : 'bg-space-panel-2 text-space-dim hover:text-space-text'
               }`}
             >
