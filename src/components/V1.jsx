@@ -1,6 +1,8 @@
 import { useRef, useEffect, useMemo, useState } from 'react'
 import * as d3 from 'd3'
 import { useStormDetail } from '../hooks/useStormDetail'
+import FullscreenFrame from './FullscreenFrame'
+import FullscreenButton from './FullscreenButton'
 
 // Two stacked mini-charts, each showing a user-selectable parameter.
 // Defaults to Speed / Dst.
@@ -20,7 +22,7 @@ const paramByKey = key => PARAM_OPTIONS.find(p => p.key === key) ?? PARAM_OPTION
 const MARGIN = { top: 10, right: 20, bottom: 36, left: 60 }
 const ROW_GAP = 30
 
-export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead, stormCatalog }) {
+export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead, stormCatalog, isFullscreen, onToggleFullscreen }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
   // Playback cursor, updated without a full redraw
@@ -408,7 +410,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
   }, [playhead, sizeTick, data])
 
   return (
-    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+    <FullscreenFrame isFullscreen={isFullscreen} onClose={() => onToggleFullscreen(false)}>
       {/* Panel header: row pickers, Compare-vs, color legend */}
       <div
         className="flex-none flex items-center gap-x-3 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60"
@@ -457,6 +459,8 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgba(255,91,84,0.35)' }} />
           storm
         </span>
+
+        <FullscreenButton active={isFullscreen} onClick={() => onToggleFullscreen(!isFullscreen)} />
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}
@@ -477,6 +481,6 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
             </>
         }
       </div>
-    </div>
+    </FullscreenFrame>
   )
 }

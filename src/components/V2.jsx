@@ -1,5 +1,7 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import * as d3 from 'd3'
+import FullscreenFrame from './FullscreenFrame'
+import FullscreenButton from './FullscreenButton'
 
 // Marginal histograms: density along the top, speed along the side
 const TOP_HIST_H = 54
@@ -20,7 +22,7 @@ const CHANNELS = [
 // timezone suffixes — compare as plain strings, not via new Date().
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
-export default function V2({ data, loading, selectedPoints, onSelectPoints, selectedStorm, playhead }) {
+export default function V2({ data, loading, selectedPoints, onSelectPoints, selectedStorm, playhead, isFullscreen, onToggleFullscreen }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
   // Playback cursor, updated without a full redraw
@@ -356,7 +358,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
   }, [playhead, sizeTick, data])
 
   return (
-    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+    <FullscreenFrame isFullscreen={isFullscreen} onClose={() => onToggleFullscreen(false)}>
       <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
         <span className="text-sm font-semibold text-space-text truncate" title="Density vs speed · drag a lasso to select points · color channel toggle on the right">
           Phase Space
@@ -378,6 +380,8 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
               </button>
             ))}
           </div>
+
+          <FullscreenButton active={isFullscreen} onClick={() => onToggleFullscreen(!isFullscreen)} />
         </div>
       </div>
 
@@ -408,6 +412,6 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
           </div>
         )}
       </div>
-    </div>
+    </FullscreenFrame>
   )
 }

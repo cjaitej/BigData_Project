@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 import { fetchDay } from '../utils/fetchWindow'
 import { magnetopauseR0, flaringAlpha, shueRadius } from '../utils/shue'
+import FullscreenFrame from './FullscreenFrame'
+import FullscreenButton from './FullscreenButton'
 
 // Orbital Exposure Simulator — Earth-centric date+hour snapshot. Canvas +
 // requestAnimationFrame. Orbital shells at true Earth-radii scale:
@@ -72,7 +74,7 @@ const EARTH_SPECKLE = (() => {
   }))
 })()
 
-export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
+export default function V5({ simDate, simHour, setSimDate, setSimHour, isFullscreen, onToggleFullscreen }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
 
@@ -313,7 +315,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
   }, [])
 
   return (
-    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+    <FullscreenFrame isFullscreen={isFullscreen} onClose={() => onToggleFullscreen(false)}>
       <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
         <span
           className="text-sm font-semibold text-space-text truncate"
@@ -321,6 +323,10 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
         >
           Orbital Exposure Simulator
         </span>
+
+        <div className="ml-auto">
+          <FullscreenButton active={isFullscreen} onClick={() => onToggleFullscreen(!isFullscreen)} />
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col gap-2 p-2">
@@ -350,7 +356,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
           )}
         </div>
       </div>
-    </div>
+    </FullscreenFrame>
   )
 }
 

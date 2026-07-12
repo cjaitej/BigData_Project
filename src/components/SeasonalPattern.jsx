@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
+import FullscreenFrame from './FullscreenFrame'
+import FullscreenButton from './FullscreenButton'
 
 // Seasonal Pattern — the Russell-McPherron effect: mean geomagnetic activity
 // by calendar month, as a radial bar chart (Jan at 12 o'clock, clockwise).
@@ -19,7 +21,7 @@ const SOLSTICE_COLOR = '#E8A33D'
 // Viridis gradient CSS for the legend swatch
 const VIRIDIS_GRADIENT = `linear-gradient(to right, ${d3.range(0, 1.0001, 0.1).map(t => d3.interpolateViridis(t)).join(',')})`
 
-export default function SeasonalPattern({ start, end }) {
+export default function SeasonalPattern({ start, end, isFullscreen, onToggleFullscreen }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
   const [seasonal, setSeasonal] = useState(null)
@@ -136,7 +138,7 @@ export default function SeasonalPattern({ start, end }) {
   }, [seasonal, metricKey, sizeTick])
 
   return (
-    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+    <FullscreenFrame isFullscreen={isFullscreen} onClose={() => onToggleFullscreen(false)}>
       <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
         <span
           className="text-sm font-semibold text-space-text truncate"
@@ -158,6 +160,8 @@ export default function SeasonalPattern({ start, end }) {
             </button>
           ))}
         </div>
+
+        <FullscreenButton active={isFullscreen} onClick={() => onToggleFullscreen(!isFullscreen)} />
       </div>
 
       <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
@@ -190,6 +194,6 @@ export default function SeasonalPattern({ start, end }) {
           </span>
         </div>
       )}
-    </div>
+    </FullscreenFrame>
   )
 }

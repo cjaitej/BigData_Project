@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { SW_TYPES, SW_TYPE_COLOR, SW_TYPE_LABEL } from '../utils/swType'
+import FullscreenFrame from './FullscreenFrame'
+import FullscreenButton from './FullscreenButton'
 
 // Threat Escalation Flow — a 3-stage Sankey (driver type → Bz direction →
 // storm outcome), hand-built with plain SVG ribbons. Built from
@@ -29,7 +31,7 @@ function layoutColumn(nodes, H, scale) {
   })
 }
 
-export default function ThreatEscalation({ start, end }) {
+export default function ThreatEscalation({ start, end, isFullscreen, onToggleFullscreen }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
   const [flow, setFlow] = useState(null)
@@ -237,13 +239,15 @@ export default function ThreatEscalation({ start, end }) {
   }, [model, sizeTick])
 
   return (
-    <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
+    <FullscreenFrame isFullscreen={isFullscreen} onClose={() => onToggleFullscreen(false)}>
       <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
         <span className="text-sm font-semibold text-space-text truncate" title="Every hour classified 3 ways: driver type, is Bz southward this hour, is this a storm hour — over the loaded Date Range">
           Threat Escalation Flow
         </span>
 
         <span className="ml-auto text-[10px] font-mono text-space-faint whitespace-nowrap hidden sm:inline">driver → Bz direction → storm outcome</span>
+
+        <FullscreenButton active={isFullscreen} onClick={() => onToggleFullscreen(!isFullscreen)} />
       </div>
 
       <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
@@ -265,6 +269,6 @@ export default function ThreatEscalation({ start, end }) {
           ))}
         </div>
       )}
-    </div>
+    </FullscreenFrame>
   )
 }

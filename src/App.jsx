@@ -54,6 +54,10 @@ export default function App() {
   // Only Time Series / Phase Space use these filters (via filteredData).
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
 
+  // Which panel (if any) is currently blown up to full screen — 'v5' | 'v2' |
+  // 'seasonal' | 'v1' | 'escalation' | null. Only one at a time.
+  const [fullscreenPanel, setFullscreenPanel] = useState(null)
+
   const filteredData = useMemo(() => {
     const filtered = applyGlobalFilters(data, filters, stormCatalog)
     return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
@@ -104,9 +108,12 @@ export default function App() {
   // actually have something to highlight.
   const jumpToStorm = (storm) => {
     setSelectedStorm(storm)
-    if (storm?.peak_time) {
-      setSimDate(storm.peak_time.slice(0, 10))
-      setSimHour(Number(storm.peak_time.slice(11, 13)))
+    if (storm?.start) {
+      // Anchor to the storm's start, not its peak — "jump to storm" should
+      // land the cursor at the storm's onset (matching the labeled date and
+      // the left edge of its shaded band), not somewhere mid-storm.
+      setSimDate(storm.start.slice(0, 10))
+      setSimHour(Number(storm.start.slice(11, 13)))
 
       const s0 = storm.start.slice(0, 10)
       const s1 = storm.end.slice(0, 10)
@@ -147,16 +154,18 @@ export default function App() {
     }
   }
 
-  // Esc clears the lasso selection, or the selected storm if no lasso is active.
+  // Esc closes a full-screen panel first; only once none is full-screen does
+  // it fall through to clearing the lasso selection / selected storm.
   useEffect(() => {
     function onKey(e) {
       if (e.key !== 'Escape') return
+      if (fullscreenPanel) { setFullscreenPanel(null); return }
       if (selectedPoints.length) setSelectedPoints([])
       else if (selectedStorm) setSelectedStorm(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedPoints.length, selectedStorm])
+  }, [fullscreenPanel, selectedPoints.length, selectedStorm])
 
   // True right after a V1 drag-to-select (or a manual edit in the Date
   // Range popover) until the user applies or discards it — drives the
@@ -394,22 +403,42 @@ const panRight = () => {
       <main className="flex-1 min-h-0 flex flex-col gap-3 px-3 pb-3 pt-3">
         <div className="flex-1 min-h-0 flex gap-3">
           <div className="flex-[2] min-w-0">
-            <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
+            <V5
+              simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour}
+              isFullscreen={fullscreenPanel === 'v5'}
+              onToggleFullscreen={v => setFullscreenPanel(v ? 'v5' : null)}
+            />
           </div>
           <div className="flex-1 min-w-0">
-            <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
+            <V2
+              data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead}
+              isFullscreen={fullscreenPanel === 'v2'}
+              onToggleFullscreen={v => setFullscreenPanel(v ? 'v2' : null)}
+            />
           </div>
           <div className="flex-1 min-w-0">
-            <SeasonalPattern start={start} end={end} />
+            <SeasonalPattern
+              start={start} end={end}
+              isFullscreen={fullscreenPanel === 'seasonal'}
+              onToggleFullscreen={v => setFullscreenPanel(v ? 'seasonal' : null)}
+            />
           </div>
         </div>
 
         <div className="flex-none h-72 flex gap-3">
           <div className="flex-1 min-w-0">
-            <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog} />
+            <V1
+              data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog}
+              isFullscreen={fullscreenPanel === 'v1'}
+              onToggleFullscreen={v => setFullscreenPanel(v ? 'v1' : null)}
+            />
           </div>
           <div className="flex-1 min-w-0">
-            <ThreatEscalation start={start} end={end} />
+            <ThreatEscalation
+              start={start} end={end}
+              isFullscreen={fullscreenPanel === 'escalation'}
+              onToggleFullscreen={v => setFullscreenPanel(v ? 'escalation' : null)}
+            />
           </div>
         </div>
       </main>
