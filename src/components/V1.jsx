@@ -318,7 +318,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
           return
         }
 
-        const date = xScale.invert(mx)
+        const date = xScale.invert(mx - MARGIN.left)
         const d = parsed[bisectDate(parsed, date)]
         if (!d) return
 
