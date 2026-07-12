@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   parseISO,
   format,
@@ -8,12 +8,16 @@ import {
 } from "date-fns";
 import V1 from './components/V1'
 import V2 from './components/V2'
-import V3 from './components/V3'
-import V4 from './components/V4'
 import V5 from './components/V5'
+import SeasonalPattern from './components/SeasonalPattern'
+import ThreatEscalation from './components/ThreatEscalation'
+import MenuBar from './components/MenuBar'
+import { DEFAULT_FILTERS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
 
-const DEFAULT_START = '2003-10-25'
-const DEFAULT_END   = '2003-11-10'
+// Default range: full year 2003, so Seasonal Pattern / Threat Escalation
+// have enough data to be meaningful on first load.
+const DEFAULT_START = '2003-01-01'
+const DEFAULT_END   = '2003-12-31'
 const DATASET_START = parseISO("1995-01-01")
 const DATASET_END   = parseISO("2025-12-31")
 
@@ -29,19 +33,135 @@ export default function App() {
   const [draftStart, setDraftStart] = useState(DEFAULT_START)
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
-  // Linked-view state shared by V1 / V2 / V3
-  const [hoverTime, setHoverTime] = useState(null)   // Date | null — synced cursor
-  const [selection, setSelection] = useState(null)   // [Date, Date] | null — brushed range
+  // Storm catalog, fetched once and shared by the MenuBar and Time Series.
+  const [stormCatalog, setStormCatalog] = useState([])
+  useEffect(() => {
+    fetch('/api/orbital/storms')
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(setStormCatalog)
+      .catch(e => console.error('Failed to load storm catalog:', e))
+  }, [])
 
-  // Every range change goes through here so the linked cursor/brush reset too
-  const applyRange = (newStart, newEnd) => {
+  // Shared state across panels.
+  // selectedPoints: timestamps lassoed in Phase Space, shown as ticks in Time Series.
+  const [selectedPoints, setSelectedPoints] = useState([])
+  // selectedStorm: picked from the MenuBar; drives simDate/simHour so the
+  // Orbital Simulator jumps to the same moment.
+  const [selectedStorm, setSelectedStorm] = useState(null)
+  const [simDate, setSimDate] = useState(DEFAULT_START)
+  const [simHour, setSimHour] = useState(0)
+
+  // Only Time Series / Phase Space use these filters (via filteredData).
+  const [filters, setFilters] = useState(DEFAULT_FILTERS)
+
+  const filteredData = useMemo(() => {
+    const filtered = applyGlobalFilters(data, filters, stormCatalog)
+    return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
+  }, [data, filters, stormCatalog])
+
+
+  // Switching resolution changes timestamp format, so drop any lasso selection.
+  useEffect(() => { setSelectedPoints([]) }, [filters.resolution])
+
+  // Playback: sweeps a time cursor through the loaded window, hour by hour.
+  const [playing, setPlaying] = useState(false)
+  const [playSpeed, setPlaySpeed] = useState(1)
+  const [playIdx, setPlayIdx] = useState(0)
+  const playIdxRef = useRef(0)
+  useEffect(() => { playIdxRef.current = playIdx }, [playIdx])
+
+  useEffect(() => {
+    if (!playing || !data.length) return
+    const id = setInterval(() => {
+      const next = playIdxRef.current + 1
+      if (next >= data.length) { setPlaying(false); return }
+      setPlayIdx(next)
+      const dt = data[next].datetime
+      setSimDate(dt.slice(0, 10))
+      setSimHour(Number(dt.slice(11, 13)))
+    }, Math.max(40, 350 / playSpeed))
+    return () => clearInterval(id)
+  }, [playing, playSpeed, data])
+
+  // Current moment shown as the time cursor in Time Series / Phase Space.
+  const playhead = `${simDate}T${String(simHour).padStart(2, '0')}:00:00`
+
+  function togglePlay() {
+    if (!data.length) return
+    if (!playing && playIdx >= data.length - 1) setPlayIdx(0)  // replay from start
+    setPlaying(p => !p)
+  }
+
+  function resetFilters() {
+    setFilters(DEFAULT_FILTERS)
+    setSelectedStorm(null)
+    setPlaying(false)
+    setPlayIdx(0)
+    applyRange(DEFAULT_START, DEFAULT_END)
+  }
+
+  // Picking a storm reframes the date window to cover it, so the charts
+  // actually have something to highlight.
+  const jumpToStorm = (storm) => {
+    setSelectedStorm(storm)
+    if (storm?.peak_time) {
+      setSimDate(storm.peak_time.slice(0, 10))
+      setSimHour(Number(storm.peak_time.slice(11, 13)))
+
+      const s0 = storm.start.slice(0, 10)
+      const s1 = storm.end.slice(0, 10)
+      if (s0 < start || s1 > end) {
+        applyRange(
+          format(subDays(parseISO(s0), 3), 'yyyy-MM-dd'),
+          format(addDays(parseISO(s1), 4), 'yyyy-MM-dd'),
+          { syncSim: false },
+        )
+      }
+    }
+  }
+
+  // Step to the previous/next cataloged storm, chronologically.
+  const stepStorm = (dir) => {
+    if (!stormCatalog.length) return
+    const anchor = selectedStorm ? selectedStorm.start.slice(0, 10) : start
+    const target = dir > 0
+      ? stormCatalog.find(s => s.start.slice(0, 10) > anchor)
+      : [...stormCatalog].reverse().find(s => s.start.slice(0, 10) < anchor)
+    if (target) jumpToStorm(target)
+  }
+
+  // Changes the loaded window: clears the lasso, stops playback, and syncs
+  // simDate/simHour to the new start (unless the caller sets it separately,
+  // like jumpToStorm does).
+  const applyRange = (newStart, newEnd, { syncSim = true } = {}) => {
     setStart(newStart)
     setEnd(newEnd)
     setDraftStart(newStart)
     setDraftEnd(newEnd)
-    setHoverTime(null)
-    setSelection(null)
+    setSelectedPoints([])
+    setPlaying(false)
+    setPlayIdx(0)
+    if (syncSim) {
+      setSimDate(newStart)
+      setSimHour(0)
+    }
   }
+
+  // Esc clears the lasso selection, or the selected storm if no lasso is active.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Escape') return
+      if (selectedPoints.length) setSelectedPoints([])
+      else if (selectedStorm) setSelectedStorm(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedPoints.length, selectedStorm])
+
+  // True right after a V1 drag-to-select (or a manual edit in the Date
+  // Range popover) until the user applies or discards it — drives the
+  // pending-range banner below the top bar.
+  const hasPendingRange = draftStart !== start || draftEnd !== end
 
   const zoomIn = () => {
 
@@ -140,88 +260,15 @@ const panRight = () => {
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-space-bg text-space-dim font-sans">
-      {/* Compact single-row header — one strict baseline, uniform control heights */}
-      <header className="flex-none border-b border-space-hairline bg-space-panel/90 px-4 py-2">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-sm font-bold text-space-text tracking-tight whitespace-nowrap leading-none">
+      {/* Header — title/branding + status only, its own row. */}
+      <header className="flex-none border-b border-space-hairline bg-space-panel/90 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-space-text tracking-tight whitespace-nowrap leading-none">
             Solar Wind &amp; Space Weather Analytics
-            <span className="hidden xl:inline ml-2 text-[10px] font-mono font-normal text-space-faint tracking-normal">
+            <span className="hidden xl:inline ml-3 text-xs font-mono font-normal text-space-faint tracking-normal">
               CS661 · Group 21 · NASA OMNI
             </span>
           </h1>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Date range controls */}
-          <div className="flex items-center gap-2 font-mono">
-            <label className="flex items-center gap-1.5 text-xs text-space-dim">
-              Start
-              <input
-                type="date"
-                value={draftStart}
-                min="1995-01-01"
-                max={draftEnd}
-                onChange={e => setDraftStart(e.target.value)}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
-              />
-            </label>
-            <label className="flex items-center gap-1.5 text-xs text-space-dim">
-              End
-              <input
-                type="date"
-                value={draftEnd}
-                min={draftStart}
-                onChange={e => setDraftEnd(e.target.value)}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-text text-xs focus:outline-none focus:border-space-violet"
-              />
-            </label>
-            <button
-              onClick={() => applyRange(draftStart, draftEnd)}
-              disabled={loading}
-              className="h-6 px-3 rounded bg-space-violet hover:bg-violet-500 disabled:opacity-50 text-xs text-white font-medium transition-colors"
-            >
-              {loading ? 'Loading…' : 'Apply'}
-            </button>
-          </div>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Pan / zoom */}
-          <div className="flex items-center gap-1 font-mono">
-            {[
-              { label: '◀', fn: panLeft, hint: 'Pan left' },
-              { label: '−', fn: zoomOut, hint: 'Zoom out' },
-              { label: '+', fn: zoomIn, hint: 'Zoom in' },
-              { label: '▶', fn: panRight, hint: 'Pan right' },
-            ].map(b => (
-              <button
-                key={b.hint}
-                onClick={b.fn}
-                title={b.hint}
-                className="h-6 w-6 flex items-center justify-center rounded bg-space-panel-2 border border-space-hairline text-xs text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="hidden sm:block h-5 w-px bg-space-hairline" />
-
-          {/* Quick presets */}
-          <div className="flex items-center gap-1 font-mono">
-            {[
-              { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
-              { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },
-            ].map(p => (
-              <button
-                key={p.label}
-                onClick={() => applyRange(p.start, p.end)}
-                className="h-6 px-2 flex items-center rounded bg-space-panel-2 hover:bg-space-panel border border-space-hairline text-[10px] text-space-dim hover:text-space-text transition-colors"
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
 
           {/* Status */}
           <div className="ml-auto flex items-center gap-2 font-mono">
@@ -245,59 +292,124 @@ const panRight = () => {
         </div>
       </header>
 
-      {/* Loading progress bar — fixed-height slot so paging doesn't shift the layout */}
+      {/* Global filters */}
+      <div className="flex-none border-b border-space-hairline bg-space-panel/60 px-3 py-2 flex justify-center">
+        <MenuBar
+          filters={filters}
+          setFilters={setFilters}
+          stormCatalog={stormCatalog}
+          selectedStorm={selectedStorm}
+          onSelectStorm={jumpToStorm}
+          playing={playing}
+          onTogglePlay={togglePlay}
+          playSpeed={playSpeed}
+          setPlaySpeed={setPlaySpeed}
+          onPrevStorm={() => stepStorm(-1)}
+          onNextStorm={() => stepStorm(1)}
+          start={start}
+          end={end}
+          draftStart={draftStart}
+          draftEnd={draftEnd}
+          setDraftStart={setDraftStart}
+          setDraftEnd={setDraftEnd}
+          onApplyRange={applyRange}
+          loading={loading}
+          onPanLeft={panLeft}
+          onPanRight={panRight}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onPreset={applyRange}
+          onReset={resetFilters}
+        />
+      </div>
+
+      {/* Loading progress bar */}
       <div className="flex-none h-0.5 bg-transparent">
         {loading && <div className="h-full bg-space-violet animate-pulse" style={{ width: '60%' }} />}
       </div>
 
-      {/* Side-by-side: V5 (simulator + its own timeline/controls) on the left,
-          the four analytical panels stacked full-width on the right — both
-          stay visible at once, no toggling needed. V5's clock drives the
-          right side. */}
-      <main
-        className="flex-1 min-h-0 grid gap-2 px-2 pb-2"
-        style={{ gridTemplateColumns: 'minmax(0, 65fr) minmax(0, 35fr)' }}
-      >
-        <div className="min-h-0">
-          <V5
-            start={start}
-            end={end}
-            hoverTime={hoverTime}
-            setHoverTime={setHoverTime}
-            selection={selection}
-            applyRange={applyRange}
-          />
+      {/* Shown after a chart drag or manual date edit, until applied */}
+      {hasPendingRange && (
+        <div className="flex-none flex items-center justify-center gap-3 px-4 py-1.5 bg-space-violet/10 border-b border-space-hairline text-xs font-mono">
+          <span className="text-space-dim">
+            Pending range from chart selection: <b className="text-space-text tabular-nums">{draftStart} → {draftEnd}</b>
+          </span>
+          <button
+            onClick={() => applyRange(draftStart, draftEnd)}
+            className="px-2.5 py-0.5 rounded bg-space-violet hover:bg-violet-500 text-white text-[11px] font-medium transition-colors"
+          >
+            Apply
+          </button>
+          <button
+            onClick={() => { setDraftStart(start); setDraftEnd(end) }}
+            className="px-2.5 py-0.5 rounded bg-space-panel-2 border border-space-hairline text-space-dim hover:text-space-text text-[11px] transition-colors"
+          >
+            Discard
+          </button>
         </div>
-        <div className="min-h-0 overflow-hidden grid grid-rows-4 gap-2">
-          <div className="min-h-0 overflow-hidden">
-            <V1
-              data={data}
-              setDraftStart={setDraftStart}
-              setDraftEnd={setDraftEnd}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
-              setSelection={setSelection}
-            />
+      )}
+
+      {/* Active cross-visual selections */}
+      {(selectedStorm || selectedPoints.length > 0) && (
+        <div className="flex-none flex items-center justify-center gap-2 px-4 py-1.5 border-b border-space-hairline text-[11px] font-mono">
+          <span className="text-space-faint">Linked selections:</span>
+          {selectedStorm && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-aurora/60 bg-space-aurora/10 text-space-aurora">
+              ⚡ {selectedStorm.start.slice(0, 10)} · {selectedStorm.intensity} storm
+              <button
+                onClick={() => setSelectedStorm(null)}
+                aria-label="Clear the selected storm"
+                title="Clear the selected storm"
+                className="hover:text-space-text leading-none"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+          {selectedPoints.length > 0 && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-violet/60 bg-space-violet/10 text-violet-300">
+              ◈ {selectedPoints.length} pts lassoed in Phase Space
+              <button
+                onClick={() => setSelectedPoints([])}
+                aria-label="Clear the lassoed points"
+                title="Clear the lassoed points"
+                className="hover:text-space-text leading-none"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+          <button
+            onClick={() => { setSelectedStorm(null); setSelectedPoints([]) }}
+            className="px-2 py-0.5 rounded border border-space-hairline text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
+          >
+            Clear all
+          </button>
+          <span className="text-space-faint hidden lg:inline">(or press Esc)</span>
+        </div>
+      )}
+
+      {/* All panels on one page: Orbital / Phase Space / Seasonal on top,
+          Time Series / Threat Escalation below. */}
+      <main className="flex-1 min-h-0 flex flex-col gap-3 px-3 pb-3 pt-3">
+        <div className="flex-1 min-h-0 flex gap-3">
+          <div className="flex-[2] min-w-0">
+            <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
           </div>
-          <div className="min-h-0 overflow-hidden">
-            <V3
-              data={data}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
-            />
+          <div className="flex-1 min-w-0">
+            <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
           </div>
-          <div className="min-h-0 overflow-hidden">
-            <V2
-              data={data}
-              hoverTime={hoverTime}
-              setHoverTime={setHoverTime}
-              selection={selection}
-            />
+          <div className="flex-1 min-w-0">
+            <SeasonalPattern start={start} end={end} />
           </div>
-          <div className="min-h-0 overflow-hidden">
-            <V4 data={data} />
+        </div>
+
+        <div className="flex-none h-72 flex gap-3">
+          <div className="flex-1 min-w-0">
+            <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <ThreatEscalation start={start} end={end} />
           </div>
         </div>
       </main>

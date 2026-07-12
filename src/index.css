@@ -26,6 +26,14 @@
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 }
 
+/* Tell the browser this is a dark UI so NATIVE form widgets (the <select>
+   dropdown arrows, date-picker icons, scrollbars) render in their dark
+   variants — without this, Windows draws dark arrows on our dark panels
+   and they disappear entirely. */
+:root {
+  color-scheme: dark;
+}
+
 body {
   background: var(--color-space-bg);
   font-family: var(--font-sans);
