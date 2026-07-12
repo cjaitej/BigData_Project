@@ -11,7 +11,7 @@ export const DEFAULT_FILTERS = {
   bz:       [-100, 100],
   kp:       [0, 9],
   dst:      [-700, 200],
-  resolution: 'hourly',
+  resolution: 'daily',
 }
 
 // Both /api/data and /api/orbital/storms represent the same UTC instants,

@@ -149,16 +149,18 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
     //--------------------------------------------------
     // Grid + axes
     //--------------------------------------------------
+    // Faint (not fully opaque) — these are reference gridlines behind the
+    // scatter, not data; at full opacity they competed with the dots.
     gridGroup.append('g')
       .call(d3.axisLeft(y).tickSize(-width).tickFormat(''))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330'))
+      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-opacity', 0.45))
 
     gridGroup.append('g')
       .attr('transform', `translate(0,${height})`)
       .call(d3.axisBottom(x).ticks(6, '~g').tickSize(-height).tickFormat(''))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330'))
+      .call(g => g.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-opacity', 0.45))
 
     axisGroup.append('g')
       .attr('transform', `translate(0,${height})`)
@@ -394,8 +396,8 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60">
-        <span className="text-sm font-semibold text-space-text" title="Density vs speed · drag a lasso to select points · color channel toggle on the right">
+      <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
+        <span className="text-sm font-semibold text-space-text truncate" title="Density vs speed · drag a lasso to select points · color channel toggle on the right">
           Phase Space
         </span>
 
@@ -415,14 +417,6 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
               </button>
             ))}
           </div>
-          <button
-            onClick={() => onSelectPoints?.([])}
-            aria-label="Clear the lassoed selection"
-            title="Clear the lassoed selection"
-            className="px-2 py-0.5 text-[10px] rounded bg-space-panel-2 border border-space-hairline text-space-dim hover:text-space-text transition-colors"
-          >
-            Clear
-          </button>
         </div>
       </div>
 

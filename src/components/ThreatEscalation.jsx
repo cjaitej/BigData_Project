@@ -16,12 +16,24 @@ import { SW_TYPES, SW_TYPE_COLOR, SW_TYPE_LABEL } from '../utils/swType'
 // (that's what Storm Analysis's lag correlation actually measures).
 
 const GAP = 10
-const COL_X = [0.06, 0.46, 0.94]
+// Fixed pixel margins (not width fractions) so the outer columns' labels —
+// the longest being "Southward Bz" / "Fast stream" — always have room to
+// render without being clipped by the panel's overflow-hidden, regardless
+// of how narrow the panel gets.
+const LABEL_MARGIN = 96
+const NODE_W = 14
 const SOUTH_COLOR = { false: '#4F8CFF', true: '#f87171' }
 const SOUTH_LABEL = { false: 'Northward Bz', true: 'Southward Bz' }
 const STORM_COLOR = { false: '#43D9C8', true: '#FF5B54' }
 const STORM_LABEL = { false: 'Quiet hour', true: 'Storm hour' }
 
+// Box height must stay strictly proportional to value — ribbon thickness
+// elsewhere is computed from the SAME `value * scale`, so a node whose box
+// was resized independently of its value would make its ribbons visibly
+// overflow (or underfill) that box. A prior attempt clamped small nodes to
+// a minimum height for label room and broke exactly that. The label-vs-tiny-
+// box collision is fixed in drawNodes instead, by hiding labels that don't
+// fit rather than distorting sizes.
 function layoutColumn(nodes, H, scale) {
   const heights = nodes.map(n => n.value * scale)
   const totalStack = d3.sum(heights) + GAP * (nodes.length - 1)
@@ -108,7 +120,6 @@ export default function ThreatEscalation({ start, end }) {
     if (!model || !wrapRef.current) return
     const W = wrapRef.current.clientWidth
     const H = wrapRef.current.clientHeight || 500
-    const NODE_W = 16
 
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
@@ -122,7 +133,11 @@ export default function ThreatEscalation({ start, end }) {
     const col1 = layoutColumn(model.col1, H - 40, scale).map(n => ({ ...n, y0: n.y0 + 20, y1: n.y1 + 20 }))
     const col2 = layoutColumn(model.col2, H - 40, scale).map(n => ({ ...n, y0: n.y0 + 20, y1: n.y1 + 20 }))
     const byId = new Map([...col0, ...col1, ...col2].map(n => [n.id, n]))
-    const x0 = COL_X[0] * W, x1 = COL_X[1] * W, x2 = COL_X[2] * W
+    // Outer columns inset by a fixed label margin (clamped so very narrow
+    // panels still keep a usable plot area); middle column stays centered.
+    const x0 = LABEL_MARGIN
+    const x2 = Math.max(x0 + 160, W - LABEL_MARGIN - NODE_W)
+    const x1 = (x0 + x2) / 2
 
     const tooltip = d3.select(wrapRef.current).selectAll('div.flow-tip').data([null]).join('div')
       .attr('class', 'flow-tip')
@@ -173,26 +188,75 @@ export default function ThreatEscalation({ start, end }) {
     drawLinks(model.linksAB, x0, x1)
     drawLinks(model.linksBC, x1, x2)
 
+    // Box height stays honestly proportional to value (see layoutColumn) —
+    // resizing a box to fit its label would make that node's ribbons visibly
+    // inaccurate (thickness no longer matching the box they flow from). So
+    // a thin sliver's label doesn't get a bigger box; instead its LABEL
+    // position is nudged away from its neighbors (greedy top-to-bottom, same
+    // idea as scatter/map label placement), with a thin leader line back to
+    // its actual box whenever it had to move — every node keeps a name,
+    // nothing gets silently dropped.
+    const MIN_LABEL_GAP = 12
+    function layoutLabels(nodes) {
+      let prevY = -Infinity
+      return nodes.map(n => {
+        const ideal = (n.y0 + n.y1) / 2
+        const y = Math.max(ideal, prevY + MIN_LABEL_GAP)
+        prevY = y
+        return y
+      })
+    }
+
     function drawNodes(nodes, x) {
-      nodes.forEach(n => {
+      const labelYs = layoutLabels(nodes)
+      nodes.forEach((n, i) => {
+        const h = n.y1 - n.y0
+        const boxMidY = (n.y0 + n.y1) / 2
+        const labelY = labelYs[i]
+        const nudged = Math.abs(labelY - boxMidY) > 2
         const html = `<b>${n.label}</b><br/>${n.value.toLocaleString()} hours (${((n.value / model.total) * 100).toFixed(1)}%)`
         svg.append('rect')
-          .attr('x', x).attr('y', n.y0).attr('width', NODE_W).attr('height', Math.max(1, n.y1 - n.y0))
+          .attr('x', x).attr('y', n.y0).attr('width', NODE_W).attr('height', Math.max(1, h))
           .attr('fill', n.color).attr('rx', 2)
           .on('mouseover', event => showTip(event, html))
           .on('mousemove', event => showTip(event, html))
           .on('mouseout', () => tooltip.style('opacity', 0))
         const labelLeft = x < W / 2
-        svg.append('text')
-          .attr('x', labelLeft ? x - 8 : x + NODE_W + 8).attr('y', (n.y0 + n.y1) / 2 - 4)
-          .attr('text-anchor', labelLeft ? 'end' : 'start')
-          .attr('fill', '#E7EAF0').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
-          .text(n.label)
-        svg.append('text')
-          .attr('x', labelLeft ? x - 8 : x + NODE_W + 8).attr('y', (n.y0 + n.y1) / 2 + 10)
-          .attr('text-anchor', labelLeft ? 'end' : 'start')
-          .attr('fill', '#7C8496').attr('font-size', 9).attr('font-family', "'JetBrains Mono', monospace")
-          .text(`${((n.value / model.total) * 100).toFixed(1)}%`)
+        const lx = labelLeft ? x - 8 : x + NODE_W + 8
+        const anchor = labelLeft ? 'end' : 'start'
+
+        if (nudged) {
+          svg.append('line')
+            .attr('x1', labelLeft ? x : x + NODE_W).attr('y1', boxMidY)
+            .attr('x2', lx).attr('y2', labelY)
+            .attr('stroke', '#4B5265').attr('stroke-width', 1)
+        }
+
+        // Full two-line label (name + percentage) only when the box has
+        // genuine room on its own; a nudged or thin node gets one condensed
+        // line instead, so cascading pushes can't make labels overlap.
+        if (h >= 24 && !nudged) {
+          svg.append('text')
+            .attr('x', lx).attr('y', labelY - 4)
+            .attr('text-anchor', anchor)
+            .attr('fill', '#E7EAF0').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
+            .text(n.label)
+          svg.append('text')
+            .attr('x', lx).attr('y', labelY + 10)
+            .attr('text-anchor', anchor)
+            .attr('fill', '#7C8496').attr('font-size', 9).attr('font-family', "'JetBrains Mono', monospace")
+            .text(`${((n.value / model.total) * 100).toFixed(1)}%`)
+        } else {
+          // Name only (no inline percentage) — appending "· N.N%" made this
+          // string wider than LABEL_MARGIN was sized for (calibrated against
+          // the longest single label, "Southward Bz"), so it got clipped by
+          // the panel's overflow-hidden. The tooltip still has the percentage.
+          svg.append('text')
+            .attr('x', lx).attr('y', labelY + 3)
+            .attr('text-anchor', anchor)
+            .attr('fill', '#E7EAF0').attr('font-size', 10).attr('font-family', "'JetBrains Mono', monospace")
+            .text(n.label)
+        }
       })
     }
     drawNodes(col0, x0)
@@ -203,12 +267,12 @@ export default function ThreatEscalation({ start, end }) {
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      <div className="flex-none flex items-center gap-3 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60 flex-wrap">
-        <span className="text-sm font-semibold text-space-text" title="Every hour classified 3 ways: driver type, is Bz southward this hour, is this a storm hour — over the loaded Date Range">
+      <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
+        <span className="text-sm font-semibold text-space-text truncate" title="Every hour classified 3 ways: driver type, is Bz southward this hour, is this a storm hour — over the loaded Date Range">
           Threat Escalation Flow
         </span>
 
-        <span className="ml-auto text-[10px] font-mono text-space-faint">driver → Bz direction → storm outcome</span>
+        <span className="ml-auto text-[10px] font-mono text-space-faint whitespace-nowrap hidden sm:inline">driver → Bz direction → storm outcome</span>
       </div>
 
       <div ref={wrapRef} className="relative w-full flex-1 min-h-0 overflow-hidden">
@@ -221,11 +285,13 @@ export default function ThreatEscalation({ start, end }) {
       </div>
 
       {model && (
-        <div className="flex-none px-4 py-2.5 border-t border-space-hairline text-[10px] font-mono text-space-faint leading-relaxed">
-          Storm rate by driver (marginal over Bz sign): {SW_TYPES.filter(t => model.stormRateByType[t]).map(t =>
-            <span key={t}><b style={{ color: SW_TYPE_COLOR[t] }}>{SW_TYPE_LABEL[t]} {model.stormRateByType[t].storm}%</b>{' · '}</span>
-          )}
-          <br />A single hour's Bz sign barely moves the storm rate within a driver type — sustained southward stretches matter far more than any one snapshot (see Storm Analysis's lag correlation).
+        <div
+          className="flex-none px-3 py-1.5 border-t border-space-hairline text-[10px] font-mono text-space-faint truncate"
+          title="A single hour's Bz sign barely moves the storm rate within a driver type — sustained southward stretches matter far more than any one snapshot (see Storm Analysis's lag correlation)."
+        >
+          Storm rate by driver: {SW_TYPES.filter(t => model.stormRateByType[t]).map((t, i, arr) => (
+            <span key={t}><b style={{ color: SW_TYPE_COLOR[t] }}>{SW_TYPE_LABEL[t]} {model.stormRateByType[t].storm}%</b>{i < arr.length - 1 ? ' · ' : ''}</span>
+          ))}
         </div>
       )}
     </div>

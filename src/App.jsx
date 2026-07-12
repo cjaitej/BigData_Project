@@ -11,29 +11,20 @@ import V2 from './components/V2'
 import V5 from './components/V5'
 import SeasonalPattern from './components/SeasonalPattern'
 import ThreatEscalation from './components/ThreatEscalation'
-import Sidebar from './components/Sidebar'
 import MenuBar from './components/MenuBar'
 import { DEFAULT_FILTERS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
 
-const DEFAULT_START = '2003-10-25'
-const DEFAULT_END   = '2003-11-10'
+// A full year (still centered on the Halloween 2003 storm) rather than just
+// the ~17-day storm window — with every panel now on screen at once,
+// Seasonal Pattern and Threat Escalation need a wide range to be meaningful
+// on first load (a narrow window only lights up the 1-2 months it covers).
+const DEFAULT_START = '2003-01-01'
+const DEFAULT_END   = '2003-12-31'
 const DATASET_START = parseISO("1995-01-01")
 const DATASET_END   = parseISO("2025-12-31")
 
 const MAX_RANGE_DAYS = 365 * 2
 const MIN_RANGE_DAYS = 2
-
-// Storm Comparison and Bz→Dst Correlation were originally separate subpages
-// but are merged back into one ("Storm Analysis") — a shared storm picker
-// drives both the shock-aligned comparison charts and the lag-correlation
-// panel side by side, so nothing about picking a storm is duplicated.
-const SECTIONS = [
-  { id: 'orbital',     title: 'Orbital Exposure Simulator',  description: 'LEO/Polar/MEO/GEO shells against the live magnetopause.' },
-  { id: 'timeseries',  title: 'Time Series',                description: 'Speed, Bz and Dst on one shared time axis, storm periods shaded.' },
-  { id: 'phasespace',  title: 'Phase Space',                 description: 'Density vs. speed scatter; lasso to select, color by |B|/Bz/Kp.' },
-  { id: 'seasonal',    title: 'Seasonal Pattern',             description: 'Mean Kp/AE by calendar month — the equinox storm-risk effect.' },
-  { id: 'escalation',  title: 'Threat Escalation Flow',        description: 'Sankey: driver type → Bz direction → storm outcome.' },
-]
 
 export default function App() {
   const [data, setData]         = useState([])
@@ -64,8 +55,6 @@ export default function App() {
   const [selectedStorm, setSelectedStorm] = useState(null)
   const [simDate, setSimDate] = useState(DEFAULT_START)
   const [simHour, setSimHour] = useState(0)
-
-  const [activeSection, setActiveSection] = useState('orbital')
 
   // Global filters — only Time Series/Phase Space/Event Spectrogram respect
   // these (via `filteredData` below); Storm Analysis/Orbital fetch their own
@@ -296,23 +285,6 @@ const panRight = () => {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  function renderActiveSection() {
-    switch (activeSection) {
-      case 'timeseries':
-        return <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog} />
-      case 'phasespace':
-        return <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
-      case 'orbital':
-        return <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
-      case 'seasonal':
-        return <SeasonalPattern start={start} end={end} />
-      case 'escalation':
-        return <ThreatEscalation start={start} end={end} />
-      default:
-        return null
-    }
-  }
-
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-space-bg text-space-dim font-sans">
       {/* Header — title/branding + status only, its own row. */}
@@ -449,12 +421,30 @@ const panRight = () => {
         </div>
       )}
 
-      {/* Sidebar of numbered subpages + a single full-space active view,
-          instead of all 5 panels crammed on screen at once. */}
-      <main className="flex-1 min-h-0 flex gap-3 px-3 pb-3 pt-3">
-        <Sidebar sections={SECTIONS} activeId={activeSection} onSelect={setActiveSection} />
-        <div className="flex-1 min-w-0 min-h-0">
-          {renderActiveSection()}
+      {/* Every panel on one page. Top row: Orbital Exposure Simulator on the
+          left with the largest share of the row (top priority for space),
+          then Phase Space / Seasonal Pattern. Bottom row: Time Series beside
+          Threat Escalation Flow. */}
+      <main className="flex-1 min-h-0 flex flex-col gap-3 px-3 pb-3 pt-3">
+        <div className="flex-1 min-h-0 flex gap-3">
+          <div className="flex-[2] min-w-0">
+            <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <SeasonalPattern start={start} end={end} />
+          </div>
+        </div>
+
+        <div className="flex-none h-72 flex gap-3">
+          <div className="flex-1 min-w-0">
+            <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <ThreatEscalation start={start} end={end} />
+          </div>
         </div>
       </main>
     </div>

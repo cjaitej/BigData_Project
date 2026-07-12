@@ -2,13 +2,13 @@ import { useRef, useEffect, useMemo, useState } from 'react'
 import * as d3 from 'd3'
 import { useStormDetail } from '../hooks/useStormDetail'
 
-// Small multiples: three stacked mini-charts on one shared time axis, each
-// showing a user-selectable parameter (dropdown per row, in the header).
-// Defaults to Speed (the solar wind driver arriving) / Bz (the southward
-// turning that lets energy couple in) / Dst (the geomagnetic response) since
-// that cause → coupling → effect sequence is the story most worth seeing
-// first — but any of the 9 options below can go in any row. The full
-// parameter set still appears in the hover tooltip regardless of row picks.
+// Small multiples: two stacked mini-charts on one shared time axis, each
+// showing a user-selectable parameter (Top/Bottom pickers in the header).
+// Defaults to Speed (the solar wind driver arriving) / Dst (the geomagnetic
+// response) — the cause → effect pair most worth seeing first — but any of
+// the 9 options below can go in either row. The full parameter set still
+// appears in the hover tooltip regardless of row picks. (A third row was
+// tried and dropped — two reads as cleaner than three stacked mini-charts.)
 const PARAM_OPTIONS = [
   { key: 'flow_speed_kms',     label: 'Speed',   unit: 'km/s', color: '#4ade80' },
   { key: 'proton_density_ncc', label: 'Density', unit: 'n/cc', color: '#22d3ee' },
@@ -27,11 +27,6 @@ const MARGIN = { top: 10, right: 20, bottom: 36, left: 60 }
 // mini-chart, not three lines floating in one tall panel.
 const ROW_GAP = 30
 
-// Both /api/data and /api/orbital/storms represent the same UTC instants,
-// just formatted differently — compare as plain ISO strings, never via
-// `new Date()` (documented timezone-string-family gotcha for this project).
-const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
-
 export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead, stormCatalog }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
@@ -49,9 +44,9 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
   const [emptyAll, setEmptyAll] = useState(false)
 
-  // One parameter dropdown per row — defaults preserve the original
-  // Speed/Bz/Dst layout, but each row is independently re-pickable.
-  const [rowKeys, setRowKeys] = useState(['flow_speed_kms', 'bz_gsm_nT', 'dst_omni'])
+  // One parameter dropdown per row — defaults to Speed/Dst, each row
+  // independently re-pickable via the Top/Bottom pickers in the header.
+  const [rowKeys, setRowKeys] = useState(['flow_speed_kms', 'dst_omni'])
   const ROWS = rowKeys.map(paramByKey)
   function setRowKey(i, key) {
     setRowKeys(rk => rk.map((k, idx) => (idx === i ? key : k)))
@@ -99,8 +94,44 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
     const bisectDate = d3.bisector(d => d.t).center
 
+    // Comparison-storm anchor: the main storm's own shock instant (i=0 row
+    // of its shock-aligned window) — every comparison-line point is placed
+    // at `anchor + i hours`, so both storms' shocks land on the same pixel
+    // column even though this chart's x-axis is real absolute time. With no
+    // main storm selected, fall back to the comparison storm's OWN shock
+    // instant as its anchor — since `i` is already relative-to-shock and
+    // `t` is each row's real timestamp, anchoring a storm to itself just
+    // reproduces its real dates, i.e. the comparison line simply shows up
+    // wherever it actually falls in the loaded window instead of requiring
+    // a main storm pick first.
+    const selfAnchor = cmpAlignData?.series.find(r => r.i === 0)?.t ?? null
+    const mainAnchor = (selectedStorm ? mainAlignData?.series.find(r => r.i === 0)?.t : selfAnchor) ?? null
+
+    // The comparison series only spans ~84h (useStormDetail's 12h-before to
+    // 72h-after window). Left at the full loaded range's zoom level — which
+    // can now be a full year by default — that 84h sliver compresses to a
+    // handful of pixels and reads as barely-there. While a comparison is
+    // active, focus the time axis on that window instead (padded a bit for
+    // context) so the comparison is actually visible; clearing the
+    // comparison reverts to the full loaded range automatically since this
+    // reruns on every cmpAlignData change.
+    const focused = !!(cmpAlignData && mainAnchor)
+    // No main storm picked — the comparison IS the only storm in view, at
+    // its own real dates. `mainAlignData` (hourly) isn't fetched in this
+    // case, so the solid line falls back to `parsed`, which can be
+    // daily-aggregated regardless of how tightly we've zoomed — a handful of
+    // daily points across a multi-day focused window drew as a flat,
+    // detail-free line right next to the fully-hourly dashed one. Below,
+    // self-anchored focus draws `cmpAlignData` itself as the solid line
+    // (real hourly detail) and skips the dashed overlay entirely, since
+    // duplicating the same series as both would just be redundant.
+    const selfAnchored = focused && !selectedStorm
+    const xDomain = focused
+      ? [new Date(mainAnchor.getTime() - 24 * 3600000), new Date(mainAnchor.getTime() + 96 * 3600000)]
+      : d3.extent(parsed, d => d.t)
+
     const xScale = d3.scaleTime()
-      .domain(d3.extent(parsed, d => d.t))
+      .domain(xDomain)
       .range([0, W])
 
     // Detect contiguous storm_flag intervals once (generic violet shading).
@@ -117,27 +148,8 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
     const g = svg.append('g').attr('transform', `translate(${MARGIN.left},${MARGIN.top})`)
 
-    // Selected-storm pixel interval, computed once — drawn per-row below.
-    // Taken directly from the catalog's own [start,end] (clipped to the
-    // visible window), NOT by matching against storm_flag runs: the two
-    // storm definitions don't always overlap, and requiring a match made a
-    // picked storm silently fail to highlight.
-    let selStormPx = null
-    if (selectedStorm) {
-      const selT0 = new Date(stripZ(selectedStorm.start))
-      const selT1 = new Date(stripZ(selectedStorm.end))
-      const [d0, d1] = xScale.domain()
-      if (selT1 >= d0 && selT0 <= d1) {
-        selStormPx = [xScale(selT0 < d0 ? d0 : selT0), xScale(selT1 > d1 ? d1 : selT1)]
-      }
-    }
     const selSet = new Set(selectedPoints ?? [])
 
-    // Comparison-storm anchor: the main storm's own shock instant (i=0 row
-    // of its shock-aligned window) — every comparison-line point is placed
-    // at `anchor + i hours`, so both storms' shocks land on the same pixel
-    // column even though this chart's x-axis is real absolute time.
-    const mainAnchor = mainAlignData?.series.find(r => r.i === 0)?.t ?? null
     const [domD0, domD1] = xScale.domain()
 
     let totalNonNull = 0
@@ -156,23 +168,18 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
       // Storm shading — same x positions in every row, so alignment across
       // parameters still reads while the gaps between rows stay clean.
+      // Muted danger-red wash (NOT violet, NOT neutral gray) — violet is
+      // reserved for lasso selection (the ticks below, and V2's lasso
+      // itself), and this app already uses red/danger for "storm" elsewhere
+      // (ThreatEscalation's storm-hour color, the header's storm-jump
+      // control) — kept low-opacity so it stays a background wash and
+      // doesn't compete with the brighter red Bz line drawn on top of it.
       stormIntervals.forEach(([s, e]) => {
         rg.append('rect')
           .attr('x', xScale(s)).attr('y', 0)
           .attr('width', Math.max(1, xScale(e) - xScale(s))).attr('height', CH_H)
-          .attr('fill', 'rgba(168,85,247,0.14)')
+          .attr('fill', 'rgba(255,91,84,0.10)')
       })
-
-      // Selected-storm highlight, per row — aurora green, reserved solely
-      // for "the storm you picked" (teal is UI chrome, violet is lasso/storm
-      // context, orange is the now-cursor — each state owns one hue).
-      if (selStormPx) {
-        rg.append('rect')
-          .attr('x', selStormPx[0]).attr('y', 0)
-          .attr('width', Math.max(2, selStormPx[1] - selStormPx[0])).attr('height', CH_H)
-          .attr('fill', 'rgba(92,242,160,0.15)')
-          .attr('stroke', '#5CF2A0').attr('stroke-width', 1.5)
-      }
 
       // Lasso-selection ticks (violet), per row.
       if (selSet.size) {
@@ -186,13 +193,23 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
         })
       }
 
-      const vals = parsed.map(d => d[row.key]).filter(v => v != null)
+      // Solid-line source: normally `parsed` (the main loaded+filtered data
+      // at whatever resolution). Selected-storm focus swaps in that storm's
+      // own hourly fetch instead — `parsed` can be daily-aggregated, which
+      // reads as a flat, detail-free line once zoomed into a multi-day
+      // focused window. Self-anchored focus draws `cmpAlignData` itself as
+      // the solid line (see `focused`/`selfAnchored` above).
+      const solidSource = (focused && selectedStorm && mainAlignData) ? mainAlignData.series
+        : selfAnchored ? cmpAlignData.series
+        : parsed
+      const vals = solidSource.map(d => d[row.key]).filter(v => v != null)
       totalNonNull += vals.length
       // Comparison values share this row's y-domain (even where their
       // projected time falls outside the visible window) — the whole point
       // of overlaying a second storm is comparing magnitude, so the axis
-      // must accommodate both regardless of x-overlap.
-      const cmpVals = cmpAlignData ? cmpAlignData.series.map(r => r[row.key]).filter(v => v != null) : []
+      // must accommodate both regardless of x-overlap. Skipped when
+      // self-anchored — `cmpVals` would just be `vals` again there.
+      const cmpVals = (cmpAlignData && !selfAnchored) ? cmpAlignData.series.map(r => r[row.key]).filter(v => v != null) : []
       const allVals = vals.concat(cmpVals)
       const [yMin, yMax] = allVals.length ? d3.extent(allVals) : [0, 1]
       const pad = (yMax - yMin) * 0.08 || 1
@@ -219,8 +236,11 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
       // y-axis ticks and the dashed zero line carry the reference values.)
 
       // Comparison-storm overlay (dashed, drawn under the main line) — only
-      // when a compare pick exists AND the main storm's shock was found.
-      if (cmpAlignData && mainAnchor) {
+      // when a compare pick exists, the anchor was found, AND there's an
+      // actual second series to distinguish it from (self-anchored focus
+      // draws the comparison storm as the ordinary solid line instead, via
+      // solidSource above, since there's nothing else to compare it to).
+      if (cmpAlignData && mainAnchor && !selfAnchored) {
         const projT = d => new Date(mainAnchor.getTime() + d.i * 3600000)
         const cmpLine = d3.line()
           .defined(d => d[row.key] != null && projT(d) >= domD0 && projT(d) <= domD1)
@@ -245,7 +265,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
         .curve(row.curve || d3.curveLinear)
 
       rg.append('path')
-        .datum(parsed)
+        .datum(solidSource)
         .attr('fill', 'none')
         .attr('stroke', row.color)
         .attr('stroke-width', 1.5)
@@ -261,11 +281,10 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
         .call(ax => ax.selectAll('.tick text')
           .attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace").attr('font-size', 9).attr('dx', -2))
 
-      // Row label
-      rg.append('text')
-        .attr('x', 6).attr('y', 11)
-        .attr('fill', row.color).attr('font-size', 10).attr('font-family', "'JetBrains Mono', monospace").attr('font-weight', 600)
-        .text(`${row.label} (${row.unit})`)
+      // No in-chart row label — the Top/Bottom pickers in the header already
+      // say what each row shows, and this text collided with the orange
+      // "now" playhead badge whenever the playhead sat near a window's
+      // start (both anchor to the same top-left corner).
 
       // Per-row empty state — only this row's strip says so, the other
       // rows keep rendering normally.
@@ -467,38 +486,51 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      {/* Panel header */}
+      {/* Panel header — everything lives here (row pickers, Compare-vs, the
+          color legend), so the chart body underneath is pure data with
+          nothing floating over it to collide with the lines. */}
       <div
-        className="flex-none flex items-center gap-3 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60 flex-wrap"
-        title="Drag to set Start/End · violet ticks = points lassoed in Phase Space"
+        className="flex-none flex items-center gap-x-3 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60"
+        title="Drag to set Start/End · violet ticks = points lassoed in Phase Space · hover for all parameters"
       >
-        <span className="text-sm font-semibold text-space-text">Time Series</span>
+        {/* flex-none on the title and every cluster below — without it, a
+            crowded row (pickers + Compare-vs + storm swatch) let the flex
+            row's default shrink behavior squeeze the plain-text title down
+            to nothing under `truncate` before touching the selects (which
+            have their own minimum content size and don't visibly shrink the
+            same way), so "Time Series" was disappearing while everything
+            else still fit. */}
+        <span className="flex-none text-sm font-semibold text-space-text">Time Series</span>
 
-        <div className="flex items-center gap-2 font-mono text-[10px]">
-          {['Top', 'Mid', 'Bottom'].map((posLabel, i) => (
+        <div className="flex-none flex items-center gap-2 font-mono text-[10px]">
+          {['Top', 'Bottom'].map((posLabel, i) => (
             <label key={posLabel} className="flex items-center gap-1 text-space-dim">
               {posLabel}
               <select
                 value={rowKeys[i]}
                 onChange={e => setRowKey(i, e.target.value)}
-                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-text text-[10px]"
+                style={{ color: paramByKey(rowKeys[i]).color }}
+                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-[10px] font-semibold"
               >
-                {PARAM_OPTIONS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                {PARAM_OPTIONS.map(p => (
+                  <option key={p.key} value={p.key} style={{ color: p.color, background: '#12151C' }}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </label>
           ))}
         </div>
 
-        <div className="h-4 w-px bg-space-hairline" />
+        <div className="flex-none h-4 w-px bg-space-hairline" />
 
-        <div className="flex items-center gap-1.5 font-mono text-[10px]">
-          <span className="text-space-dim">Compare vs</span>
+        <div className="flex-none flex items-center gap-1.5 font-mono text-[10px]">
+          <span className="text-space-dim whitespace-nowrap">Compare vs</span>
           <select
             value={cmpId}
             onChange={e => setCmpId(e.target.value)}
-            disabled={!selectedStorm}
-            title={!selectedStorm ? 'Pick a main storm first (⚠ jump control above) to enable comparison' : undefined}
-            className="h-6 max-w-48 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-dim text-[10px] disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Overlay another storm's curve — aligned to the main storm's shock if one is selected (⚠ jump control above), otherwise shown at its own real dates. The chart temporarily zooms to that comparison window while active."
+            className="h-6 max-w-48 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-dim text-[10px]"
           >
             <option value="">No comparison</option>
             {sortedCatalog.map(s => (
@@ -507,9 +539,9 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
           </select>
         </div>
 
-        <span className="ml-auto text-[10px] font-mono text-space-faint text-right">
-          {cmpAlignData && compareStorm && <>dashed = {compareStorm.start.slice(0, 10)} (aligned at shock) · </>}
-          hover for all parameters
+        <span className="ml-auto flex-none flex items-center gap-1 font-mono text-[9px] text-space-dim whitespace-nowrap">
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgba(255,91,84,0.35)' }} />
+          storm
         </span>
       </div>
 

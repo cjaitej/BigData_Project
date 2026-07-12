@@ -17,6 +17,12 @@ const METRICS = [
 ]
 const EQUINOX = new Set([3, 9])
 const SOLSTICE = new Set([6, 12])
+const EQUINOX_COLOR = '#5CF2A0'
+const SOLSTICE_COLOR = '#E8A33D'
+
+// Precomputed once — the wedge fill color scale (viridis), rendered as a CSS
+// gradient for the legend swatch (no canvas / extra SVG defs needed).
+const VIRIDIS_GRADIENT = `linear-gradient(to right, ${d3.range(0, 1.0001, 0.1).map(t => d3.interpolateViridis(t)).join(',')})`
 
 export default function SeasonalPattern({ start, end }) {
   const wrapRef = useRef(null)
@@ -24,6 +30,9 @@ export default function SeasonalPattern({ start, end }) {
   const [seasonal, setSeasonal] = useState(null)
   const [error, setError] = useState(null)
   const [metricKey, setMetricKey] = useState('meanKp')
+  // Mirrors the d3 effect's colorScale domain, so the legend always shows
+  // the range actually mapped to color in the chart currently on screen.
+  const [colorDomain, setColorDomain] = useState([0, 1])
 
   useEffect(() => {
     let cancelled = false
@@ -64,6 +73,7 @@ export default function SeasonalPattern({ start, end }) {
     const rScale = d3.scaleLinear().domain([Math.min(0, minV), maxV]).range([0, Rmax - R0])
     const colorScale = d3.scaleSequential().domain([minV, maxV]).interpolator(d3.interpolateViridis)
     const meanV = d3.mean(vals)
+    setColorDomain([minV, maxV])
 
     // Reference circle at the overall mean, so wedges above/below it read instantly
     if (meanV != null) {
@@ -88,7 +98,7 @@ export default function SeasonalPattern({ start, end }) {
       .attr('d', arc)
       .attr('fill', d => d.value != null ? colorScale(d.value) : '#252B3A')
       .attr('fill-opacity', 0.88)
-      .attr('stroke', d => (EQUINOX.has(d.month) ? '#5CF2A0' : SOLSTICE.has(d.month) ? '#E8A33D' : '#0A0C10'))
+      .attr('stroke', d => (EQUINOX.has(d.month) ? EQUINOX_COLOR : SOLSTICE.has(d.month) ? SOLSTICE_COLOR : '#0A0C10'))
       .attr('stroke-width', d => (EQUINOX.has(d.month) || SOLSTICE.has(d.month)) ? 2 : 1)
       .style('cursor', 'default')
       .on('mouseover', function (event, d) {
@@ -116,7 +126,7 @@ export default function SeasonalPattern({ start, end }) {
       g.append('text')
         .attr('x', lx).attr('y', ly)
         .attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
-        .attr('fill', EQUINOX.has(s.month) ? '#5CF2A0' : SOLSTICE.has(s.month) ? '#E8A33D' : '#7C8496')
+        .attr('fill', EQUINOX.has(s.month) ? EQUINOX_COLOR : SOLSTICE.has(s.month) ? SOLSTICE_COLOR : '#7C8496')
         .attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace").attr('font-weight', EQUINOX.has(s.month) || SOLSTICE.has(s.month) ? 700 : 400)
         .text(MONTH_NAMES[s.month - 1])
     })
@@ -133,12 +143,12 @@ export default function SeasonalPattern({ start, end }) {
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      <div className="flex-none flex items-center gap-3 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60 flex-wrap">
-        <span className="text-sm font-semibold text-space-text" title="Mean activity by calendar month over the loaded Date Range — the Russell-McPherron semiannual variation: activity peaks near equinoxes (clearest with many years loaded)">
+      <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
+        <span
+          className="text-sm font-semibold text-space-text truncate"
+          title="Mean activity by calendar month over the loaded Date Range — the Russell-McPherron semiannual variation: activity peaks near equinoxes (clearest with many years loaded)."
+        >
           Seasonal Pattern
-        </span>
-        <span className="text-[10px] font-mono text-space-faint">
-          <span className="text-space-aurora">green rim</span> = equinox · <span className="text-space-slow">amber rim</span> = solstice
         </span>
 
         <div className="ml-auto flex items-center rounded-md border border-space-hairline overflow-hidden font-mono">
@@ -164,6 +174,28 @@ export default function SeasonalPattern({ start, end }) {
           : <svg ref={svgRef} style={{ display: 'block' }} />
         }
       </div>
+
+      {/* Legend — its own strip below the chart (not overlaid on it, and not
+          crammed into the header): the month labels ring the entire circle,
+          so there's no corner of the chart itself safe from collision, and
+          the header already carries the title + metric toggle. */}
+      {seasonal && (
+        <div className="flex-none flex items-center flex-wrap gap-x-3 gap-y-1 px-3 py-1.5 border-t border-space-hairline text-[10px] font-mono text-space-dim">
+          <span className="flex items-center gap-1.5">
+            <span className="text-space-faint whitespace-nowrap">{METRICS.find(m => m.key === metricKey)?.label} (wedge color)</span>
+            <span className="h-2 w-16 rounded-full" style={{ background: VIRIDIS_GRADIENT }} />
+            <span className="text-space-faint tabular-nums whitespace-nowrap">{colorDomain[0].toFixed(2)}–{colorDomain[1].toFixed(2)}</span>
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: EQUINOX_COLOR }} />
+            equinox
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: SOLSTICE_COLOR }} />
+            solstice
+          </span>
+        </div>
+      )}
     </div>
   )
 }

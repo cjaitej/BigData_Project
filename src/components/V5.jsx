@@ -187,10 +187,12 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
       if (!F) return
 
       const cx = W * 0.58, cy = H / 2
-      // 0.7× scene scale: shrinks Earth + every shell so the Sun can read
+      // 0.82× scene scale: shrinks Earth + every shell so the Sun can read
       // as the dominant body (the real ratio is ~109:1 — undrawable, but
-      // Earth shouldn't dwarf the Sun as it used to).
-      const pxRe = 0.7 * Math.min(H / 2 - 34, W * 0.30) / RE.GEO
+      // Earth shouldn't dwarf the Sun as it used to). Bumped up from 0.7 so
+      // Earth (and its shells) are comfortably visible now that the header
+      // is shorter and the canvas has more room.
+      const pxRe = 0.82 * Math.min(H / 2 - 34, W * 0.30) / RE.GEO
       const sunX = 128, sunR = Math.min(84, H * 0.11)
       const aeN = F.noData ? 0 : (F.row.ae_norm ?? 0)
 
@@ -330,15 +332,23 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
-      <div className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60">
-        <span className="text-sm font-semibold text-space-text">Orbital Exposure Simulator</span>
-        <span className="hidden xl:block text-[10px] font-mono text-space-faint">
-          · true-scale LEO/Polar/MEO/GEO shells · full Shue magnetopause · a storm click elsewhere jumps this snapshot
+      <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-space-hairline bg-space-panel-2/60">
+        <span
+          className="text-sm font-semibold text-space-text truncate"
+          title="True-scale LEO/Polar/MEO/GEO shells · full Shue magnetopause · a storm click elsewhere jumps this snapshot"
+        >
+          Orbital Exposure Simulator
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 flex gap-2 p-2">
-        <div ref={wrapRef} className="relative flex-1 min-w-0 rounded-lg overflow-hidden"
+      <div className="flex-1 min-h-0 flex flex-col gap-2 p-2">
+        <V5TopBar
+          simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour}
+          frame={frame}
+          visibleOrbits={visibleOrbits} setVisibleOrbits={setVisibleOrbits}
+        />
+
+        <div ref={wrapRef} className="relative flex-1 min-h-0 rounded-lg overflow-hidden"
           style={{ background: 'radial-gradient(ellipse at 50% 40%, #0d1118 0%, #060810 70%, #030405 100%)' }}>
           <canvas ref={canvasRef} className="block w-full h-full" />
           {dayError && (
@@ -357,76 +367,71 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
             </div>
           )}
         </div>
-
-        <V5Sidebar
-          simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour}
-          frame={frame}
-          visibleOrbits={visibleOrbits} setVisibleOrbits={setVisibleOrbits}
-        />
       </div>
     </div>
   )
 }
 
 //--------------------------------------------------
-// Sidebar: controls + exact-value readout + exposure chips
+// Top bar: controls + exact-value readout + exposure chips, laid out as a
+// single wrapping row above the canvas (was a right-hand sidebar — moved
+// on top so the canvas can claim the full panel width).
 //--------------------------------------------------
 // The old per-view "jump to storm" select was removed — the global red
 // "⚠ JUMP TO STORM → ALL PANELS" control in the top bar covers it and also
 // updates every other panel, so a local one that only moved this snapshot
 // was confusing.
-function V5Sidebar({ simDate, simHour, setSimDate, setSimHour, frame, visibleOrbits, setVisibleOrbits }) {
+function V5TopBar({ simDate, simHour, setSimDate, setSimHour, frame, visibleOrbits, setVisibleOrbits }) {
   return (
-    <div className="flex-none w-64 flex flex-col gap-2 overflow-y-auto font-mono text-[11px]">
-      {/* Controls */}
-      <div className="rounded-lg bg-space-panel-2 border border-space-hairline p-2.5 flex flex-col gap-2">
-        <label className="flex items-center justify-between gap-2 text-space-dim">
-          Date
-          <input type="date" value={simDate} min="1995-01-01" max="2025-12-31"
-            onChange={e => setSimDate(e.target.value)}
-            className="bg-space-panel border border-space-hairline rounded px-1.5 py-0.5 text-space-text text-[10px]" />
-        </label>
-        <label className="flex flex-col gap-1 text-space-dim">
-          <span className="flex items-center justify-between">Hour <b className="text-space-text">{String(simHour).padStart(2, '0')}:00 UT</b></span>
-          <input type="range" min="0" max="23" step="1" value={simHour}
-            onChange={e => setSimHour(Number(e.target.value))}
-            className="w-full accent-space-violet" />
-        </label>
-        <div className="pt-1 border-t border-space-hairline">
-          <div className="text-[9px] uppercase tracking-wider text-space-faint mb-1">Shells</div>
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {ORBITS.map(o => (
-              <label key={o} className="flex items-center gap-1 text-space-dim cursor-pointer whitespace-nowrap">
-                <input
-                  type="checkbox" checked={visibleOrbits.has(o)}
-                  onChange={() => setVisibleOrbits(prev => {
-                    const next = new Set(prev)
-                    next.has(o) ? next.delete(o) : next.add(o)
-                    return next
-                  })}
-                  className="accent-space-fast"
-                />
-                {o}
-              </label>
-            ))}
-          </div>
-        </div>
+    <div className="flex-none rounded-lg bg-space-panel-2 border border-space-hairline px-3 py-2 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[11px]">
+      <label className="flex items-center gap-2 text-space-dim">
+        Date
+        <input type="date" value={simDate} min="1995-01-01" max="2025-12-31"
+          onChange={e => setSimDate(e.target.value)}
+          className="bg-space-panel border border-space-hairline rounded px-1.5 py-0.5 text-space-text text-[10px]" />
+      </label>
+
+      <label className="flex items-center gap-2 text-space-dim">
+        Hour <b className="text-space-text">{String(simHour).padStart(2, '0')}:00 UT</b>
+        <input type="range" min="0" max="23" step="1" value={simHour}
+          onChange={e => setSimHour(Number(e.target.value))}
+          className="w-28 accent-space-violet" />
+      </label>
+
+      <div className="flex items-center gap-2.5">
+        <span className="text-space-faint uppercase tracking-wider text-[9px]">Shells</span>
+        {ORBITS.map(o => (
+          <label key={o} className="flex items-center gap-1 text-space-dim cursor-pointer whitespace-nowrap">
+            <input
+              type="checkbox" checked={visibleOrbits.has(o)}
+              onChange={() => setVisibleOrbits(prev => {
+                const next = new Set(prev)
+                next.has(o) ? next.delete(o) : next.add(o)
+                return next
+              })}
+              className="accent-space-fast"
+            />
+            {o}
+          </label>
+        ))}
       </div>
 
-      <ReadoutPanel frame={frame} />
+      <div className="h-4 w-px bg-space-hairline" />
+
+      <ReadoutStrip frame={frame} />
     </div>
   )
 }
 
-function ReadoutPanel({ frame }) {
+function ReadoutStrip({ frame }) {
   if (!frame) {
-    return <div className="rounded-lg bg-space-panel-2 border border-space-hairline p-2.5 text-space-faint">loading…</div>
+    return <span className="text-space-faint">loading…</span>
   }
   if (frame.noData) {
     return (
-      <div className="rounded-lg bg-space-panel-2 border border-space-hairline p-2.5 text-space-faint leading-relaxed">
-        No usable measurements within ±6 h of the chosen hour (instrument saturation). Showing a dashed default magnetopause (Bz 0 nT, Pdyn 2 nPa).
-      </div>
+      <span className="text-space-faint">
+        No usable measurements within ±6 h of the chosen hour (instrument saturation) — showing a dashed default magnetopause (Bz 0 nT, Pdyn 2 nPa).
+      </span>
     )
   }
 
@@ -440,40 +445,33 @@ function ReadoutPanel({ frame }) {
     ['AE', r.ae_index_nT?.toFixed(0), 'nT'],
     ['Dst', r.dst_omni?.toFixed(0), 'nT'],
     ['Kp', r.kp, ''],
-    ['Magnetopause r₀', frame.mp.r0.toFixed(2), 'Re'],
   ]
 
   return (
-    <div className="rounded-lg bg-space-panel-2 border border-space-hairline p-2.5 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
       {frame.fallback && (
-        <div className="text-space-slow text-[10px]">⚠ this hour has a gap — showing {String(frame.usedHour).padStart(2, '0')}:00 UT instead</div>
+        <span className="text-space-slow">⚠ gap — showing {String(frame.usedHour).padStart(2, '0')}:00 UT</span>
       )}
-      <table className="w-full">
-        <tbody>
-          {rows.map(([k, v, u]) => (
-            <tr key={k}>
-              <td className="text-space-faint py-0.5">{k}</td>
-              <td className="text-right py-0.5"><b className="text-space-text">{v ?? '—'}</b>{u && <span className="text-space-faint ml-1">{u}</span>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
 
-      <div className="text-space-faint uppercase tracking-wider text-[9px] mt-1">shell exposure</div>
+      {rows.map(([k, v, u]) => (
+        <span key={k} className="text-space-faint whitespace-nowrap">
+          {k} <b className="text-space-text">{v ?? '—'}</b>{u && <span className="text-space-faint ml-0.5">{u}</span>}
+        </span>
+      ))}
+
+      <div className="h-4 w-px bg-space-hairline" />
+
       {ORBITS.map(o => {
         const lv = level(frame.scores[o])
         return (
-          <div key={o} className="flex items-center justify-between">
-            <span className="text-space-dim">{o}</span>
-            <span className="px-1.5 py-0.5 rounded text-[10px]" style={{ color: LEVEL_COLOR[lv], background: `${LEVEL_COLOR[lv]}1a`, border: `1px solid ${LEVEL_COLOR[lv]}` }}>
-              {LEVEL_TEXT[lv]} · {frame.scores[o].toFixed(2)}
-            </span>
-          </div>
+          <span key={o} className="px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap" style={{ color: LEVEL_COLOR[lv], background: `${LEVEL_COLOR[lv]}1a`, border: `1px solid ${LEVEL_COLOR[lv]}` }}>
+            {o} {LEVEL_TEXT[lv]} · {frame.scores[o].toFixed(2)}
+          </span>
         )
       })}
 
       {frame.mp.r0 < RE.GEO && (
-        <div className="text-space-slow text-[10px] mt-1">⚠ magnetopause inside GEO — dayside GEO satellites are outside the magnetosphere</div>
+        <span className="text-space-slow whitespace-nowrap">⚠ magnetopause inside GEO</span>
       )}
     </div>
   )
