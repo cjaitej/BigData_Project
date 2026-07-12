@@ -5,8 +5,8 @@ const DISPLAY_BEFORE = 12   // hours shown before the detected shock
 const DISPLAY_AFTER  = 72   // hours shown after
 const SHOCK_LOOKBACK  = 48  // how far back to search for the steepest Pdyn rise
 
-// Both /api/data and /api/orbital/storms represent the same UTC instants,
-// just formatted differently — compare as plain strings, never via `new Date()`.
+// /api/data and /api/orbital/storms use different timezone suffixes for the
+// same instants — compare as plain strings, not via new Date().
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
 function addDaysISO(dateStr, days) {
@@ -15,8 +15,7 @@ function addDaysISO(dateStr, days) {
   return d.toISOString().slice(0, 10)
 }
 
-// Steepest positive hourly ΔPdyn in the `lookback` hours before `peakIdx`
-// (the SYM-H/Dst minimum) — skips any pair straddling a data gap.
+// Steepest positive hourly ΔPdyn before peakIdx (the SYM-H minimum)
 function findShockIndex(series, peakIdx, lookback) {
   let best = -Infinity, idx = null
   const from = Math.max(1, peakIdx - lookback)
@@ -28,9 +27,8 @@ function findShockIndex(series, peakIdx, lookback) {
   return idx ?? peakIdx
 }
 
-// Fetch a storm's detail window, auto-detect its shock arrival, and trim to
-// a fixed-length display window re-indexed so `i` is directly "hours from
-// shock" (…so drawing never needs a separate shift/offset term).
+// Fetch a storm's window, detect its shock arrival, and re-index so `i` is
+// hours from shock.
 async function loadStormDetail(storm) {
   const startPad = addDaysISO(stripZ(storm.start).slice(0, 10), -1)
   const endPad = addDaysISO(stripZ(storm.end).slice(0, 10), 5)
@@ -55,9 +53,7 @@ async function loadStormDetail(storm) {
   return { storm, series: windowed }
 }
 
-// Fetches + shock-aligns a single storm's detail window, re-running whenever
-// `storm` changes. Used by Time Series for its main storm + "compare vs"
-// storm (two independent calls, one per storm).
+// Fetches and shock-aligns a storm's detail window
 export function useStormDetail(storm) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)

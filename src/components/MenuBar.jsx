@@ -8,13 +8,8 @@ const PRESETS = [
 
 const SPEEDS = [1, 2, 5, 10]
 
-// Compact single-row menu bar holding only the filters that affect MULTIPLE
-// views (date window, numeric ranges, resolution) plus the storm playback
-// cluster: play/pause + speed animate a time cursor through the loaded
-// window across every panel; ◀/▶ step between cataloged storms; the red
-// "jump to storm" select reframes + highlights everywhere. Single-view
-// controls live inside their own view instead (orbit shells → Orbital
-// sidebar, comparison storm → Storm Analysis header).
+// Top menu bar: date range, storm playback controls, and numeric filters
+// that apply across multiple views.
 export default function MenuBar({
   filters, setFilters,
   stormCatalog, selectedStorm, onSelectStorm,
@@ -26,9 +21,7 @@ export default function MenuBar({
   const [openMenu, setOpenMenu] = useState(null)
   const barRef = useRef(null)
 
-  // Close on any click outside the whole bar (including its open popover);
-  // clicks on a different trigger button are handled by that button's own
-  // toggle, and clicks inside the open popover's controls never reach here.
+  // Close the open popover on any click outside the bar
   useEffect(() => {
     if (!openMenu) return
     function handleClick(e) {
@@ -172,7 +165,7 @@ export default function MenuBar({
           onSelectStorm(s || null)
         }}
         aria-label="Jump to storm — updates all panels"
-        title="Jump to a storm — loads its dates, highlights it in every chart, drives Storm Analysis + the Orbital Simulator"
+        title="Jump to a storm — loads its dates and highlights it in every panel"
         className="h-8 max-w-64 rounded-lg bg-space-danger/10 border border-space-danger/60 px-2 text-space-danger text-[10px] tracking-wide"
       >
         <option value="">⚠ JUMP TO STORM → ALL PANELS</option>

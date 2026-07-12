@@ -3,28 +3,22 @@ import * as d3 from 'd3'
 import { fetchDay } from '../utils/fetchWindow'
 import { magnetopauseR0, flaringAlpha, shueRadius } from '../utils/shue'
 
-// Orbital Exposure Simulator — an Earth-centric static date+hour snapshot
-// (not a 30-year playback). Canvas + requestAnimationFrame, Sun to the
-// left, Earth centered, orbital shells at TRUE Earth-radii scale:
+// Orbital Exposure Simulator — Earth-centric date+hour snapshot. Canvas +
+// requestAnimationFrame. Orbital shells at true Earth-radii scale:
 //   LEO 400 km ≈ 1.06 Re, Polar 850 km ≈ 1.13 Re, MEO 20,200 km ≈ 4.17 Re,
 //   GEO 35,786 km ≈ 6.61 Re
 //
-// Magnetopause: full Shue et al. (1998) angular formula (src/utils/shue.js)
-//   r(θ) = r0 · (2 / (1 + cosθ))^α
-// During real severe storms r0 can drop below GEO — dayside GEO satellites
-// visibly leave the magnetosphere.
+// Magnetopause: Shue et al. (1998) — r(θ) = r0 · (2 / (1 + cosθ))^α
 //
-// Exposure scores per shell (weighted combinations of the *_norm columns,
-// thresholds calibrated 1995-2025: safe < 0.34 ≤ elevated < 0.62 ≤ danger):
-//   GEO   0.55·mpFactor + 0.30·ae_n + 0.15·imf_n   (mpFactor = clamp((9−r0)/2.4))
+// Exposure score per shell (weighted *_norm columns, thresholds:
+// safe < 0.34 ≤ elevated < 0.62 ≤ danger):
+//   GEO   0.55·mpFactor + 0.30·ae_n + 0.15·imf_n
 //   MEO   0.45·clamp(−Dst/250) + 0.35·ae_n + 0.20·speed_n
 //   LEO   0.45·ae_n + 0.35·Kp/9 + 0.20·density_n
 //   Polar 0.50·ae_n + 0.30·(1−bz_n) + 0.20·speed_n
-// Any GEO satellite whose local r_mp(θ) is below its own radius is flagged.
 //
-// Decorative-only: stars/corona/streamlines/satellite motion animate every
-// frame on wall-clock time; none of it reads or writes app state. The only
-// state driving the actual scene is simDate/simHour (+ orbit visibility).
+// Stars/corona/streamlines/satellite motion are decorative only — the
+// actual scene is driven by simDate/simHour.
 
 const RE = { LEO: 1.0627, Polar: 1.1334, MEO: 4.1683, GEO: 6.6107 }
 const ORBITS = ['LEO', 'Polar', 'MEO', 'GEO']
@@ -47,15 +41,14 @@ function rowValid(r) {
   return !!r && ok(r.bz_gsm_nT) && ok(r.pdyn_computed_nPa) && r.pdyn_computed_nPa > 0 && ok(r.ae_norm)
 }
 
-// d3-scale-chromatic's interpolators return "#rrggbb" hex strings — split
-// into channels so the aurora glow gradient can vary alpha per stop.
+// Split viridis's hex output into RGB channels so the aurora glow can vary alpha per stop
 function viridisRgb(t) {
   const hex = d3.interpolateViridis(clamp01(t))
   const n = parseInt(hex.slice(1), 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-// Deterministic decorative starfield, generated once and tiled across the canvas.
+// Seeded RNG for a deterministic starfield
 function mulberry32(seed) {
   return function () {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0
@@ -86,11 +79,9 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
   const [day, setDay] = useState([])
   const [dayError, setDayError] = useState(null)
 
-  // Shell visibility is V5-local: it only affects this scene, so it lives in
-  // this view's own sidebar instead of the global filter bar.
   const [visibleOrbits, setVisibleOrbits] = useState(() => new Set(ORBITS))
 
-  // Fetch the sim day's hourly rows whenever the date changes.
+  // Fetch the sim day's hourly rows
   useEffect(() => {
     let cancelled = false
     setDayError(null)
@@ -100,10 +91,8 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
     return () => { cancelled = true }
   }, [simDate])
 
-  // Frame state: the row for simHour (falling back to the nearest valid
-  // hour within ±6h — search backward then forward each step, same-day
-  // only), the full Shue magnetopause, and per-shell exposure scores.
-  // Coefficients ported verbatim from the design spec.
+  // The row for simHour, falling back to the nearest valid hour within ±6h,
+  // plus the magnetopause and per-shell exposure scores.
   const frame = useMemo(() => {
     if (!day.length) return null
     let row = day[simHour], usedHour = simHour, fallback = false
@@ -129,21 +118,17 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
     return { row, usedHour, fallback, mp: { r0, alpha }, scores, noData: false }
   }, [day, simHour])
 
-  // Live-read by the rAF loop without re-triggering the mount-once effect.
+  // Read by the rAF loop without re-triggering the mount-once effect
   const frameRef = useRef(frame)
   useEffect(() => { frameRef.current = frame }, [frame])
   const visibleOrbitsRef = useRef(visibleOrbits)
   useEffect(() => { visibleOrbitsRef.current = visibleOrbits }, [visibleOrbits])
 
-  // Latest on-screen satellite positions, refreshed every draw() call so a
-  // plain DOM mousemove listener (outside the rAF loop) can hit-test them
-  // without re-deriving orbit geometry itself.
+  // On-screen satellite positions, for the hover tooltip's hit-test
   const satsRef = useRef([])
   const [hoverSat, setHoverSat] = useState(null)
 
-  // ---- canvas: sizing + the one continuous rAF loop (decorative motion
-  // + the actual scene, both driven by frameRef so this effect never
-  // needs to restart when simDate/simHour change) ----
+  // Canvas sizing + the continuous rAF draw loop
   useEffect(() => {
     const canvas = canvasRef.current
     const wrap = wrapRef.current
@@ -187,11 +172,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
       if (!F) return
 
       const cx = W * 0.58, cy = H / 2
-      // 0.82× scene scale: shrinks Earth + every shell so the Sun can read
-      // as the dominant body (the real ratio is ~109:1 — undrawable, but
-      // Earth shouldn't dwarf the Sun as it used to). Bumped up from 0.7 so
-      // Earth (and its shells) are comfortably visible now that the header
-      // is shorter and the canvas has more room.
+      // Scale factor keeps Earth+shells smaller than the Sun (real ratio ~109:1, undrawable)
       const pxRe = 0.82 * Math.min(H / 2 - 34, W * 0.30) / RE.GEO
       const sunX = 128, sunR = Math.min(84, H * 0.11)
       const aeN = F.noData ? 0 : (F.row.ae_norm ?? 0)
@@ -273,11 +254,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
         ctx.restore()
 
         ctx.fillStyle = COL.faint
-        // LEO and Polar's radii are nearly identical (1.06 vs 1.13 Re), so
-        // both labels landing on the same bottom-right diagonal collided.
-        // Polar's label goes to the top of its ellipse instead — it also
-        // reads better there physically (a pole-to-pole orbit's label next
-        // to a pole, not off to the side).
+        // Polar's label goes on top (its radius is close to LEO's, avoids overlap)
         if (o === 'Polar') ctx.fillText(o, cx - 12, cy - R - 6)
         else ctx.fillText(o, cx + R * 0.72 + 4, cy + R * 0.72)
 
@@ -311,8 +288,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
 
     raf = requestAnimationFrame(loop)
 
-    // Satellite hover tooltip — a plain DOM listener outside the rAF loop,
-    // hit-testing against the positions draw() just refreshed in satsRef.
+    // Satellite hover tooltip, hit-testing against satsRef
     const HIT_R = 9
     function handleMove(e) {
       const rect = wrap.getBoundingClientRect()
@@ -378,15 +354,7 @@ export default function V5({ simDate, simHour, setSimDate, setSimHour }) {
   )
 }
 
-//--------------------------------------------------
-// Top bar: controls + exact-value readout + exposure chips, laid out as a
-// single wrapping row above the canvas (was a right-hand sidebar — moved
-// on top so the canvas can claim the full panel width).
-//--------------------------------------------------
-// The old per-view "jump to storm" select was removed — the global red
-// "⚠ JUMP TO STORM → ALL PANELS" control in the top bar covers it and also
-// updates every other panel, so a local one that only moved this snapshot
-// was confusing.
+// Top bar: date/hour controls, shell toggles, exposure readout
 function V5TopBar({ simDate, simHour, setSimDate, setSimHour, frame, visibleOrbits, setVisibleOrbits }) {
   return (
     <div className="flex-none rounded-lg bg-space-panel-2 border border-space-hairline px-3 py-2 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[11px]">
@@ -442,13 +410,6 @@ function ReadoutStrip({ frame }) {
   }
 
   const r = frame.row
-  // |B| (imf_mag_scalar_nT) and Pdyn were dropped from this readout: |B| has
-  // the smallest role of any value here (only a 0.15 weight in GEO's score,
-  // vs. AE's 0.30 and mpFactor's 0.55) and is largely redundant with Bz
-  // (already shown, and the more meaningful driver — the southward
-  // component, not just field magnitude); Pdyn doesn't appear in any
-  // shell's score directly, only indirectly via the magnetopause r₀ drawn
-  // on the canvas itself.
   const rows = [
     ['Bz', r.bz_gsm_nT?.toFixed(1), 'nT'],
     ['Speed', r.flow_speed_kms?.toFixed(0), 'km/s'],
@@ -472,10 +433,6 @@ function ReadoutStrip({ frame }) {
 
       <div className="h-4 w-px bg-space-hairline" />
 
-      {/* Grouped in their own non-wrapping row so the outer flex-wrap moves
-          all 4 shell chips together — without this, the wrap could split
-          the set (e.g. LEO staying on line 1, Polar/MEO/GEO pushed to
-          line 2) whenever the row above them changed length. */}
       <div className="flex items-center gap-1.5">
         {ORBITS.map(o => {
           const lv = level(frame.scores[o])
@@ -494,9 +451,7 @@ function ReadoutStrip({ frame }) {
   )
 }
 
-//--------------------------------------------------
 // Canvas drawing helpers
-//--------------------------------------------------
 
 function drawStars(ctx, W, H, clock) {
   const tilesX = Math.ceil(W / STAR_FIELD_W) + 1
@@ -515,8 +470,7 @@ function drawStars(ctx, W, H, clock) {
   }
 }
 
-// Cheap deterministic hash → [0,1), for granulation/sunspot placement
-// without storing state.
+// Deterministic hash → [0,1), for sunspot placement
 const frac = x => x - Math.floor(x)
 const hash1 = i => frac(Math.sin(i * 12.9898) * 43758.5453)
 
@@ -538,8 +492,7 @@ function drawSun(ctx, sx, sy, r, clock) {
   ctx.fillStyle = glow
   ctx.beginPath(); ctx.arc(sx, sy, r * 1.6 * pulse, 0, 2 * Math.PI); ctx.fill()
 
-  // Photosphere with limb darkening — bright white-yellow core falling to a
-  // deep orange rim (real solar discs darken toward the edge).
+  // Photosphere with limb darkening
   const disc = ctx.createRadialGradient(sx, sy, r * 0.05, sx, sy, r)
   disc.addColorStop(0, '#fffbe9')
   disc.addColorStop(0.35, '#ffedad')
@@ -553,7 +506,7 @@ function drawSun(ctx, sx, sy, r, clock) {
   ctx.beginPath(); ctx.arc(sx, sy, r, 0, 2 * Math.PI); ctx.fill()
   ctx.restore()
 
-  // Granulation + a few sunspots, clipped to the disc; drifts very slowly.
+  // Granulation + sunspots, clipped to the disc
   ctx.save()
   ctx.beginPath(); ctx.arc(sx, sy, r * 0.985, 0, 2 * Math.PI); ctx.clip()
   for (let i = 0; i < 22; i++) {

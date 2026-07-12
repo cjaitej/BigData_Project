@@ -44,20 +44,13 @@ def get_storms():
     return jsonify(events)
 
 
-# ---- Storm catalog (used by V5's quick-jump, Time Series' storm picker,
-# and the MenuBar's storm navigation) --------------------------------------
-# Computed from omni_processed.csv at startup. Uses Python's round()
-# (correctly-rounded) rather than np/pandas round: SYM-H daily minima land on
-# x.x5 halfway values often enough that the rounding rule is visible in the
-# output.
-
+# Storm catalog, computed at startup
 def _round(x, nd):
     return None if pd.isna(x) else round(float(x), nd)
 
 
 def build_storm_catalog():
-    # Storm events: contiguous hourly runs of SYM-H < -50 nT lasting >= 3 h.
-    # peak_* fields and sw_type are sampled at the SYM-H minimum hour.
+    # Contiguous hourly runs of SYM-H < -50 nT lasting >= 3 h
     below = df['sym_h_nT'] < -50
     run_id = (below != below.shift()).cumsum()
     storms = []
@@ -89,11 +82,7 @@ def get_orbital_storms():
     return jsonify(ORBITAL_STORMS)
 
 
-# ---- Seasonal (Russell-McPherron) pattern, computed once ------------------
-# Mean Kp/AE/electric-field by calendar month across all 31 years — the
-# semiannual variation (activity peaks near equinoxes) only shows up when
-# averaged over many years, so this is dataset-wide.
-
+# Mean Kp/AE/electric-field by calendar month (Russell-McPherron effect)
 def build_seasonal(start=None, end=None):
     sub_df = df
     if start is not None:
@@ -118,8 +107,7 @@ SEASONAL = build_seasonal()
 
 @app.route('/api/seasonal')
 def get_seasonal():
-    # Same global Date Range filter as /api/data (start/end date strings) —
-    # no params = the full-31-year precomputed default, zero cost.
+    # No params = precomputed full-dataset default
     start = request.args.get('start')
     end = request.args.get('end')
     if start is None and end is None:
@@ -127,15 +115,7 @@ def get_seasonal():
     return jsonify(build_seasonal(start, end))
 
 
-# ---- Threat Escalation flow (dataset-wide, computed once) -----------------
-# Every hour classified 3 ways: driver type -> is Bz southward THIS hour? ->
-# is this a storm hour? Counts only — the Sankey diagram is built from these
-# client-side. Note: within a given driver type, the storm rate barely
-# differs between southward and northward hours (e.g. CME ejecta: 48% vs
-# 43%) — a single hour's Bz sign is a weak predictor on its own; sustained
-# southward stretches matter far more (see Storm Analysis's lag correlation).
-# That's a real, honest feature of the data, not a bug in this aggregation.
-
+# Every hour classified by driver type, Bz direction, and storm outcome
 def build_escalation_flow(start=None, end=None):
     sub_df = df
     if start is not None:
@@ -159,8 +139,7 @@ ESCALATION_FLOW = build_escalation_flow()
 
 @app.route('/api/escalation_flow')
 def get_escalation_flow():
-    # Same global Date Range filter as /api/data — no params = the
-    # full-dataset precomputed default.
+    # No params = precomputed full-dataset default
     start = request.args.get('start')
     end = request.args.get('end')
     if start is None and end is None:

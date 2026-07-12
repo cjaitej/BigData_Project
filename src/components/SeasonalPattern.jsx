@@ -2,12 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 
 // Seasonal Pattern — the Russell-McPherron effect: mean geomagnetic activity
-// by calendar month, laid out as a radial bar chart (Jan at 12 o'clock,
-// clockwise). Equinox months (Mar/Sep) visibly bulge out past solstice
-// months (Jun/Dec) — a ~20% swing driven purely by Earth's orbital geometry
-// relative to the Sun, nothing to do with the solar cycle (clearest with
-// many years loaded; follows the global Date Range like every other view —
-// a narrow window will only light up the 1-2 months it covers).
+// by calendar month, as a radial bar chart (Jan at 12 o'clock, clockwise).
+// Equinox months bulge out past solstice months. Follows the global Date Range.
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const METRICS = [
@@ -20,8 +16,7 @@ const SOLSTICE = new Set([6, 12])
 const EQUINOX_COLOR = '#5CF2A0'
 const SOLSTICE_COLOR = '#E8A33D'
 
-// Precomputed once — the wedge fill color scale (viridis), rendered as a CSS
-// gradient for the legend swatch (no canvas / extra SVG defs needed).
+// Viridis gradient CSS for the legend swatch
 const VIRIDIS_GRADIENT = `linear-gradient(to right, ${d3.range(0, 1.0001, 0.1).map(t => d3.interpolateViridis(t)).join(',')})`
 
 export default function SeasonalPattern({ start, end }) {
@@ -30,8 +25,7 @@ export default function SeasonalPattern({ start, end }) {
   const [seasonal, setSeasonal] = useState(null)
   const [error, setError] = useState(null)
   const [metricKey, setMetricKey] = useState('meanKp')
-  // Mirrors the d3 effect's colorScale domain, so the legend always shows
-  // the range actually mapped to color in the chart currently on screen.
+  // Mirrors the chart's color scale domain, for the legend
   const [colorDomain, setColorDomain] = useState([0, 1])
 
   useEffect(() => {

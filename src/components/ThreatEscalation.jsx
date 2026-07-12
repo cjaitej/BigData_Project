@@ -2,24 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { SW_TYPES, SW_TYPE_COLOR, SW_TYPE_LABEL } from '../utils/swType'
 
-// Threat Escalation Flow — a 3-stage Sankey (driver type → is Bz southward
-// this hour? → is this a storm hour?), hand-built with plain SVG ribbons
-// (no d3-sankey dependency needed for a fixed 4→2→2 layout). Built from
-// /api/escalation_flow's hour counts over the loaded Date Range — same
-// global filter as every other view (a narrow window just means fewer
-// hours aggregated; widen Date Range for the full 31-year picture).
-//
-// Honest finding baked into the caption: within a given driver type, the
-// storm-hour rate barely changes between southward and northward hours
-// (e.g. CME ejecta: 48% vs 43%) — a single hour's Bz sign is a weak
-// predictor on its own; sustained southward stretches matter far more
-// (that's what Storm Analysis's lag correlation actually measures).
+// Threat Escalation Flow — a 3-stage Sankey (driver type → Bz direction →
+// storm outcome), hand-built with plain SVG ribbons. Built from
+// /api/escalation_flow, scoped to the loaded Date Range.
 
 const GAP = 10
-// Fixed pixel margins (not width fractions) so the outer columns' labels —
-// the longest being "Southward Bz" / "Fast stream" — always have room to
-// render without being clipped by the panel's overflow-hidden, regardless
-// of how narrow the panel gets.
+// Fixed pixel margin so the longest labels never get clipped
 const LABEL_MARGIN = 96
 const NODE_W = 14
 const SOUTH_COLOR = { false: '#4F8CFF', true: '#f87171' }
@@ -27,13 +15,8 @@ const SOUTH_LABEL = { false: 'Northward Bz', true: 'Southward Bz' }
 const STORM_COLOR = { false: '#43D9C8', true: '#FF5B54' }
 const STORM_LABEL = { false: 'Quiet hour', true: 'Storm hour' }
 
-// Box height must stay strictly proportional to value — ribbon thickness
-// elsewhere is computed from the SAME `value * scale`, so a node whose box
-// was resized independently of its value would make its ribbons visibly
-// overflow (or underfill) that box. A prior attempt clamped small nodes to
-// a minimum height for label room and broke exactly that. The label-vs-tiny-
-// box collision is fixed in drawNodes instead, by hiding labels that don't
-// fit rather than distorting sizes.
+// Box height stays proportional to value (ribbons are sized from the same
+// scale); tiny-box label collisions are handled in drawNodes instead.
 function layoutColumn(nodes, H, scale) {
   const heights = nodes.map(n => n.value * scale)
   const totalStack = d3.sum(heights) + GAP * (nodes.length - 1)
@@ -104,7 +87,7 @@ export default function ThreatEscalation({ start, end }) {
       }
     }
 
-    // Storm rate by driver, marginal over Bz sign — the honest-caption number.
+    // Storm rate by driver, marginal over Bz sign
     const stormRateByType = {}
     for (const t of SW_TYPES) {
       const rows = flow.filter(f => f.sw_type === t)
@@ -133,8 +116,7 @@ export default function ThreatEscalation({ start, end }) {
     const col1 = layoutColumn(model.col1, H - 40, scale).map(n => ({ ...n, y0: n.y0 + 20, y1: n.y1 + 20 }))
     const col2 = layoutColumn(model.col2, H - 40, scale).map(n => ({ ...n, y0: n.y0 + 20, y1: n.y1 + 20 }))
     const byId = new Map([...col0, ...col1, ...col2].map(n => [n.id, n]))
-    // Outer columns inset by a fixed label margin (clamped so very narrow
-    // panels still keep a usable plot area); middle column stays centered.
+    // Outer columns inset by the label margin; middle column centered
     const x0 = LABEL_MARGIN
     const x2 = Math.max(x0 + 160, W - LABEL_MARGIN - NODE_W)
     const x1 = (x0 + x2) / 2
@@ -188,14 +170,8 @@ export default function ThreatEscalation({ start, end }) {
     drawLinks(model.linksAB, x0, x1)
     drawLinks(model.linksBC, x1, x2)
 
-    // Box height stays honestly proportional to value (see layoutColumn) —
-    // resizing a box to fit its label would make that node's ribbons visibly
-    // inaccurate (thickness no longer matching the box they flow from). So
-    // a thin sliver's label doesn't get a bigger box; instead its LABEL
-    // position is nudged away from its neighbors (greedy top-to-bottom, same
-    // idea as scatter/map label placement), with a thin leader line back to
-    // its actual box whenever it had to move — every node keeps a name,
-    // nothing gets silently dropped.
+    // Thin slivers get their label nudged away from neighbors (with a leader
+    // line back to the box) instead of resizing the box itself.
     const MIN_LABEL_GAP = 12
     function layoutLabels(nodes) {
       let prevY = -Infinity
@@ -232,9 +208,7 @@ export default function ThreatEscalation({ start, end }) {
             .attr('stroke', '#4B5265').attr('stroke-width', 1)
         }
 
-        // Full two-line label (name + percentage) only when the box has
-        // genuine room on its own; a nudged or thin node gets one condensed
-        // line instead, so cascading pushes can't make labels overlap.
+        // Two-line label (name + %) when there's room; one line otherwise
         if (h >= 24 && !nudged) {
           svg.append('text')
             .attr('x', lx).attr('y', labelY - 4)
@@ -247,10 +221,7 @@ export default function ThreatEscalation({ start, end }) {
             .attr('fill', '#7C8496').attr('font-size', 9).attr('font-family', "'JetBrains Mono', monospace")
             .text(`${((n.value / model.total) * 100).toFixed(1)}%`)
         } else {
-          // Name only (no inline percentage) — appending "· N.N%" made this
-          // string wider than LABEL_MARGIN was sized for (calibrated against
-          // the longest single label, "Southward Bz"), so it got clipped by
-          // the panel's overflow-hidden. The tooltip still has the percentage.
+          // Name only — the tooltip has the percentage
           svg.append('text')
             .attr('x', lx).attr('y', labelY + 3)
             .attr('text-anchor', anchor)
@@ -287,7 +258,7 @@ export default function ThreatEscalation({ start, end }) {
       {model && (
         <div
           className="flex-none px-3 py-1.5 border-t border-space-hairline text-[10px] font-mono text-space-faint truncate"
-          title="A single hour's Bz sign barely moves the storm rate within a driver type — sustained southward stretches matter far more than any one snapshot (see Storm Analysis's lag correlation)."
+          title="A single hour's Bz sign barely moves the storm rate within a driver type — sustained southward stretches matter far more than any one snapshot."
         >
           Storm rate by driver: {SW_TYPES.filter(t => model.stormRateByType[t]).map((t, i, arr) => (
             <span key={t}><b style={{ color: SW_TYPE_COLOR[t] }}>{SW_TYPE_LABEL[t]} {model.stormRateByType[t].storm}%</b>{i < arr.length - 1 ? ' · ' : ''}</span>

@@ -1,9 +1,7 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 
-// Marginal histograms (density along the top, speed along the side) show the
-// 1D distributions alongside the 2D relationship — the scatter alone hides
-// how lopsided either distribution is on its own.
+// Marginal histograms: density along the top, speed along the side
 const TOP_HIST_H = 54
 const RIGHT_HIST_W = 54
 const HIST_GAP = 6
@@ -11,32 +9,27 @@ const OUTER_PAD = 16
 
 const MARGIN = { top: OUTER_PAD + TOP_HIST_H + HIST_GAP, right: OUTER_PAD + RIGHT_HIST_W + HIST_GAP, bottom: 40, left: 60 }
 
-// Diverging (signed) vs sequential (magnitude) color channels — Bz keeps the
-// existing symmetric RdBu treatment, |B| and Kp are single-hue viridis.
+// Bz uses a diverging (signed) scale; |B| and Kp use sequential viridis.
 const CHANNELS = [
   { key: 'imf_mag_scalar_nT', short: '|B|', label: '|B| (nT)', kind: 'seq' },
   { key: 'bz_gsm_nT',         short: 'Bz',  label: 'Bz (nT)',  kind: 'div' },
   { key: 'kp',                short: 'Kp',  label: 'Kp',       kind: 'seq' },
 ]
 
-// Both /api/data and /api/orbital/storms represent the same UTC instants,
-// just formatted differently — compare as plain ISO strings, never via
-// `new Date()` (documented timezone-string-family gotcha for this project).
+// /api/data and /api/orbital/storms use the same instants but different
+// timezone suffixes — compare as plain strings, not via new Date().
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
 export default function V2({ data, loading, selectedPoints, onSelectPoints, selectedStorm, playhead }) {
   const wrapRef = useRef(null)
   const svgRef = useRef(null)
-  // Playback cursor: {byTime, playDot} written by the main draw, moved by a
-  // tiny effect on `playhead` — no full redraw per tick.
+  // Playback cursor, updated without a full redraw
   const playRef = useRef(null)
 
   const [channel, setChannel] = useState('bz_gsm_nT')
   const [emptyData, setEmptyData] = useState(false)
 
-  // Summary stats for the lassoed points — shown as a small card so a
-  // selection immediately says what KIND of solar wind was captured, not
-  // just which dots lit up.
+  // Summary stats for the lassoed points, shown as a small card
   const selStats = useMemo(() => {
     if (!selectedPoints?.length || !data?.length) return null
     const sel = new Set(selectedPoints)
@@ -91,9 +84,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
     const cursorGroup = plot.append('g').attr('clip-path', 'url(#scatterClip)')
     const lassoGroup  = plot.append('g')
 
-    //--------------------------------------------------
-    // Data — density (x, log) vs speed (y, linear)
-    //--------------------------------------------------
+    // Data: density (x, log) vs speed (y, linear)
     const parsed = data.filter(d =>
       d.flow_speed_kms != null && d.proton_density_ncc != null && d.proton_density_ncc > 0
     ).map(d => ({ ...d, t: new Date(d.datetime) }))
@@ -109,11 +100,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .domain([Math.max(150, (speedExt[0] ?? 250) - 30), (speedExt[1] ?? 900) + 30])
       .range([height, 0]).nice()
 
-    //--------------------------------------------------
-    // Marginal histograms — density along the top (binned in log-space so
-    // bar widths visually match the log x-axis), speed along the side
-    // (binned in linear space, matching the y-axis directly).
-    //--------------------------------------------------
+    // Marginal histograms: density binned in log-space, speed in linear space
     const [dLo, dHi] = x.domain()
     const logLo = Math.log10(dLo), logHi = Math.log10(dHi)
     const nBinsX = 22
@@ -146,11 +133,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .attr('width', b => speedCount(b.length))
       .attr('fill', '#4ade80').attr('fill-opacity', 0.6)
 
-    //--------------------------------------------------
     // Grid + axes
-    //--------------------------------------------------
-    // Faint (not fully opaque) — these are reference gridlines behind the
-    // scatter, not data; at full opacity they competed with the dots.
     gridGroup.append('g')
       .call(d3.axisLeft(y).tickSize(-width).tickFormat(''))
       .call(g => g.select('.domain').remove())
@@ -173,18 +156,13 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .call(g => g.selectAll('text').attr('fill', '#7C8496').attr('font-family', "'JetBrains Mono', monospace"))
       .call(g => g.selectAll('line,path').attr('stroke', '#252B3A'))
 
-    //--------------------------------------------------
-    // Color scale — active channel
-    //--------------------------------------------------
+    // Color scale for the active channel
     const ch = CHANNELS.find(c => c.key === channel)
     let colorScale
     if (ch.kind === 'div') {
       const ext = d3.extent(parsed, d => d[ch.key])
       const maxAbs = Math.max(Math.abs(ext[0] || 0), Math.abs(ext[1] || 0)) || 15
-      // Negative (southward, reconnection-favorable) -> red/danger end; positive
-      // (northward, calm) -> blue end — must match V3's spectrogram Bz coloring
-      // (`(clipped+15)/30`, so -15 -> t=0 -> red), or the same physical value
-      // reads as opposite colors depending which panel you're looking at.
+      // Negative Bz (southward) -> red, positive (northward) -> blue
       colorScale = d3.scaleSequential().domain([-maxAbs, maxAbs]).interpolator(d3.interpolateRdBu)
     } else if (ch.key === 'kp') {
       colorScale = d3.scaleSequential().domain([0, 9]).interpolator(d3.interpolateViridis)
@@ -193,9 +171,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       colorScale = d3.scaleSequential().domain([ext[0] ?? 0, ext[1] ?? 1]).interpolator(d3.interpolateViridis)
     }
 
-    //--------------------------------------------------
     // Tooltip
-    //--------------------------------------------------
     const tooltip = d3.select(wrapRef.current).append('div')
       .style('position', 'absolute')
       .style('pointer-events', 'none')
@@ -208,15 +184,11 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .style('color', '#E7EAF0')
       .style('opacity', 0)
 
-    //--------------------------------------------------
     // Scatter
-    //--------------------------------------------------
     const selSet = new Set(selectedPoints ?? [])
     const hasSel = selSet.size > 0
 
-    // Cross-highlight for the globally selected storm: its hours get an
-    // aurora-green ring so a storm picked anywhere is visible here too.
-    // A lasso selection's white ring takes precedence when both apply.
+    // Selected-storm hours get a green ring; lasso selection (white) wins if both apply.
     const storm0 = selectedStorm ? stripZ(selectedStorm.start) : null
     const storm1 = selectedStorm ? stripZ(selectedStorm.end) : null
     const inStorm = d => storm0 != null && storm0 <= d.datetime && d.datetime <= storm1
@@ -231,8 +203,6 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .attr('cy', d => y(d.flow_speed_kms))
       .attr('r', 3.5)
       .attr('fill', d => d[ch.key] == null ? '#4B5265' : colorScale(d[ch.key]))
-      // De-emphasized (unselected during a lasso) dots stay clearly visible
-      // at 0.2 rather than vanishing at 0.12.
       .attr('fill-opacity', d => hasSel ? (selSet.has(d.datetime) ? 0.95 : 0.2) : 0.75)
       .attr('stroke', strokeFor)
       .attr('stroke-width', d => (hasSel && selSet.has(d.datetime)) ? 1.5 : 1)
@@ -250,8 +220,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       tooltip.style('left', `${left}px`).style('top', `${top}px`)
     }
 
-    // "Dashboard now" cursor: a glowing ring + center dot on the point for
-    // the current hour (position lookup via map, moved by the effect below).
+    // "Now" cursor: glowing ring + center dot on the current hour's point
     const byTime = new Map(parsed.map(d => [d.datetime, [x(d.proton_density_ncc), y(d.flow_speed_kms)]]))
     const playG = cursorGroup.append('g').style('display', 'none')
     playG.append('circle')
@@ -262,9 +231,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .attr('stroke', '#E8A33D').attr('stroke-width', 2.5)
     playG.append('circle')
       .attr('r', 2.5).attr('fill', '#E8A33D')
-    // Always-visible "now" badge — the ring alone disappears when the
-    // current hour is a data gap (no dot to ring), which reads as "the
-    // time cursor is broken". The badge states the time and says so.
+    // "Now" badge — stays visible even on a data-gap hour with no dot to ring
     const playBadge = svg.append('text')
       .attr('x', MARGIN.left + 8).attr('y', MARGIN.top + 16)
       .attr('fill', '#E8A33D').attr('font-size', 10).attr('font-weight', 600)
@@ -291,9 +258,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
         tooltip.style('opacity', 0)
       })
 
-    //--------------------------------------------------
     // Axis labels
-    //--------------------------------------------------
     svg.append('text')
       .attr('x', MARGIN.left + width / 2).attr('y', totalHeight - 8)
       .attr('text-anchor', 'middle').attr('fill', '#7C8496').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
@@ -305,9 +270,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
       .attr('text-anchor', 'middle').attr('fill', '#7C8496').attr('font-size', 11).attr('font-family', "'JetBrains Mono', monospace")
       .text('Solar Wind Speed (km/s)')
 
-    //--------------------------------------------------
     // Freehand lasso — one hit-test at mouseup, not per frame
-    //--------------------------------------------------
     let lassoPts = null
     let lassoPath = null
 
@@ -362,9 +325,7 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
 
   }, [data, sizeTick, channel, selectedPoints, onSelectPoints, selectedStorm])
 
-  // Move the "dashboard now" ring without re-running the draw effect. Falls
-  // back to nearby hours (data gaps) and to the day's midnight row in daily
-  // resolution (hourly playhead timestamps only match T00:00:00 rows there).
+  // Move the "now" ring without re-running the draw effect
   useEffect(() => {
     const r = playRef.current
     if (!r) return

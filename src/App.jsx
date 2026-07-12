@@ -14,10 +14,8 @@ import ThreatEscalation from './components/ThreatEscalation'
 import MenuBar from './components/MenuBar'
 import { DEFAULT_FILTERS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
 
-// A full year (still centered on the Halloween 2003 storm) rather than just
-// the ~17-day storm window — with every panel now on screen at once,
-// Seasonal Pattern and Threat Escalation need a wide range to be meaningful
-// on first load (a narrow window only lights up the 1-2 months it covers).
+// Default range: full year 2003, so Seasonal Pattern / Threat Escalation
+// have enough data to be meaningful on first load.
 const DEFAULT_START = '2003-01-01'
 const DEFAULT_END   = '2003-12-31'
 const DATASET_START = parseISO("1995-01-01")
@@ -35,8 +33,7 @@ export default function App() {
   const [draftStart, setDraftStart] = useState(DEFAULT_START)
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
-  // Full storm catalog (id/peak_time/intensity/...) — fetched once, shared by
-  // V3 (click-to-select), Storm Comparison/Correlation (pickers), V5 (quick-jump).
+  // Storm catalog, fetched once and shared by the MenuBar and Time Series.
   const [stormCatalog, setStormCatalog] = useState([])
   useEffect(() => {
     fetch('/api/orbital/storms')
@@ -45,21 +42,16 @@ export default function App() {
       .catch(e => console.error('Failed to load storm catalog:', e))
   }, [])
 
-  // Linked-view state shared across panels.
-  // selectedPoints: ISO timestamps lassoed in V2 — shown as tick marks in V1/V3.
+  // Shared state across panels.
+  // selectedPoints: timestamps lassoed in Phase Space, shown as ticks in Time Series.
   const [selectedPoints, setSelectedPoints] = useState([])
-  // selectedStorm: set by clicking a storm band in V3 or picking one in the
-  // Storm menu; simDate/simHour follow it so V5 can jump to the same moment
-  // (one-way — V5 has its own controls too). The comparison storm is NOT
-  // here: it only affects Storm Analysis, so it lives there as local state.
+  // selectedStorm: picked from the MenuBar; drives simDate/simHour so the
+  // Orbital Simulator jumps to the same moment.
   const [selectedStorm, setSelectedStorm] = useState(null)
   const [simDate, setSimDate] = useState(DEFAULT_START)
   const [simHour, setSimHour] = useState(0)
 
-  // Global filters — only Time Series/Phase Space/Event Spectrogram respect
-  // these (via `filteredData` below); Storm Analysis/Orbital fetch their own
-  // independent windows and are untouched by design. Orbit-shell visibility
-  // is V5-local state, not a global filter.
+  // Only Time Series / Phase Space use these filters (via filteredData).
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
 
   const filteredData = useMemo(() => {
@@ -68,16 +60,10 @@ export default function App() {
   }, [data, filters, stormCatalog])
 
 
-  // Hourly↔daily switches change every row's timestamp format, which would
-  // orphan a lasso selection (chip stays, ticks vanish) — clear it instead.
+  // Switching resolution changes timestamp format, so drop any lasso selection.
   useEffect(() => { setSelectedPoints([]) }, [filters.resolution])
 
-  //--------------------------------------------------
-  // Playback — sweeps a time cursor (playhead) hour by hour from the loaded
-  // window's start to its end. The cursor is drawn by V1/V2/V3 as a cheap
-  // overlay (no full d3 redraw per tick), and the Orbital Simulator's
-  // date/hour follow it, so "play" animates every panel together.
-  //--------------------------------------------------
+  // Playback: sweeps a time cursor through the loaded window, hour by hour.
   const [playing, setPlaying] = useState(false)
   const [playSpeed, setPlaySpeed] = useState(1)
   const [playIdx, setPlayIdx] = useState(0)
@@ -97,11 +83,7 @@ export default function App() {
     return () => clearInterval(id)
   }, [playing, playSpeed, data])
 
-  // The dashboard's "current moment" — simDate/simHour is the single source
-  // of truth (playback ticks write into it, so during playback this equals
-  // data[playIdx].datetime). Always non-null, so the time cursor in
-  // Time Series/Phase Space/Spectrogram is ALWAYS visible whenever the
-  // moment falls inside the loaded window — not only while playing.
+  // Current moment shown as the time cursor in Time Series / Phase Space.
   const playhead = `${simDate}T${String(simHour).padStart(2, '0')}:00:00`
 
   function togglePlay() {
@@ -115,20 +97,11 @@ export default function App() {
     setSelectedStorm(null)
     setPlaying(false)
     setPlayIdx(0)
-    // Restore the default date window too — after a storm jump reframed the
-    // window, a "Reset" that left the charts sitting on the storm's dates
-    // looked like it did nothing. applyRange's default syncSim also resets
-    // the dashboard's "current moment" (simDate/simHour) to match, which
-    // drives the time cursor in the charts and the Orbital snapshot.
     applyRange(DEFAULT_START, DEFAULT_END)
-    // applyRange already clears the lasso selection.
   }
 
-  // Picking a storm anywhere (V3 click or the Storm menu) drives this one
-  // path. If the storm lies outside the loaded date window, the window is
-  // re-framed to cover it — otherwise Time Series/Phase Space/Spectrogram
-  // have nothing to highlight and the pick looks like it silently did
-  // nothing (the single biggest "selection doesn't reflect" complaint).
+  // Picking a storm reframes the date window to cover it, so the charts
+  // actually have something to highlight.
   const jumpToStorm = (storm) => {
     setSelectedStorm(storm)
     if (storm?.peak_time) {
@@ -147,9 +120,7 @@ export default function App() {
     }
   }
 
-  // ◀ STORM / STORM ▶ — step chronologically through the catalog (it's
-  // built in time order). Anchor on the selected storm, else on the loaded
-  // window's start, so stepping works even before anything is picked.
+  // Step to the previous/next cataloged storm, chronologically.
   const stepStorm = (dir) => {
     if (!stormCatalog.length) return
     const anchor = selectedStorm ? selectedStorm.start.slice(0, 10) : start
@@ -159,17 +130,9 @@ export default function App() {
     if (target) jumpToStorm(target)
   }
 
-  // Every loaded-window change clears the lasso selection (points may fall
-  // outside the new window) and rewinds/stops playback (the playhead indexes
-  // into the loaded rows) — but never touches selectedStorm. It DOES sync
-  // simDate/simHour to the new range's start by default: without this, the
-  // Orbital Simulator kept showing whatever date it last had (even one
-  // outside the newly-loaded window entirely) until playback happened to
-  // tick past it — changing the Date Range, or applying a Time Series
-  // drag-selection, looked like it silently did nothing to that panel.
-  // jumpToStorm passes syncSim: false since it already points simDate at
-  // the storm's own peak time — the sync here would just clobber that with
-  // the reframed window's start instead.
+  // Changes the loaded window: clears the lasso, stops playback, and syncs
+  // simDate/simHour to the new start (unless the caller sets it separately,
+  // like jumpToStorm does).
   const applyRange = (newStart, newEnd, { syncSim = true } = {}) => {
     setStart(newStart)
     setEnd(newEnd)
@@ -184,8 +147,7 @@ export default function App() {
     }
   }
 
-  // Esc anywhere clears the most recent cross-view selection: the lasso
-  // first if one exists, otherwise the selected storm.
+  // Esc clears the lasso selection, or the selected storm if no lasso is active.
   useEffect(() => {
     function onKey(e) {
       if (e.key !== 'Escape') return
@@ -330,7 +292,7 @@ const panRight = () => {
         </div>
       </header>
 
-      {/* Global filters — their own row, centered as a group. */}
+      {/* Global filters */}
       <div className="flex-none border-b border-space-hairline bg-space-panel/60 px-3 py-2 flex justify-center">
         <MenuBar
           filters={filters}
@@ -361,15 +323,12 @@ const panRight = () => {
         />
       </div>
 
-      {/* Loading progress bar — fixed-height slot so paging doesn't shift the layout */}
+      {/* Loading progress bar */}
       <div className="flex-none h-0.5 bg-transparent">
         {loading && <div className="h-full bg-space-violet animate-pulse" style={{ width: '60%' }} />}
       </div>
 
-      {/* Pending-range banner — appears only after a V1 chart drag (or a
-          manual edit in the Date Range popover) hasn't been applied yet, so
-          that interaction has an immediate, visible next step instead of a
-          hidden one buried in the popover. */}
+      {/* Shown after a chart drag or manual date edit, until applied */}
       {hasPendingRange && (
         <div className="flex-none flex items-center justify-center gap-3 px-4 py-1.5 bg-space-violet/10 border-b border-space-hairline text-xs font-mono">
           <span className="text-space-dim">
@@ -390,9 +349,7 @@ const panRight = () => {
         </div>
       )}
 
-      {/* Active cross-visual selections — always visible regardless of which
-          view is open, so a lasso or storm pick made in one view doesn't
-          become invisible state the moment you switch to another. */}
+      {/* Active cross-visual selections */}
       {(selectedStorm || selectedPoints.length > 0) && (
         <div className="flex-none flex items-center justify-center gap-2 px-4 py-1.5 border-b border-space-hairline text-[11px] font-mono">
           <span className="text-space-faint">Linked selections:</span>
@@ -432,10 +389,8 @@ const panRight = () => {
         </div>
       )}
 
-      {/* Every panel on one page. Top row: Orbital Exposure Simulator on the
-          left with the largest share of the row (top priority for space),
-          then Phase Space / Seasonal Pattern. Bottom row: Time Series beside
-          Threat Escalation Flow. */}
+      {/* All panels on one page: Orbital / Phase Space / Seasonal on top,
+          Time Series / Threat Escalation below. */}
       <main className="flex-1 min-h-0 flex flex-col gap-3 px-3 pb-3 pt-3">
         <div className="flex-1 min-h-0 flex gap-3">
           <div className="flex-[2] min-w-0">
