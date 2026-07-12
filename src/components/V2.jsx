@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 
 // Marginal histograms (density along the top, speed along the side) show the
@@ -33,6 +33,31 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
 
   const [channel, setChannel] = useState('bz_gsm_nT')
   const [emptyData, setEmptyData] = useState(false)
+
+  // Summary stats for the lassoed points — shown as a small card so a
+  // selection immediately says what KIND of solar wind was captured, not
+  // just which dots lit up.
+  const selStats = useMemo(() => {
+    if (!selectedPoints?.length || !data?.length) return null
+    const sel = new Set(selectedPoints)
+    const rows = data.filter(d => sel.has(d.datetime))
+    if (!rows.length) return null
+    const nums = k => rows.map(r => r[k]).filter(v => v != null)
+    const mean = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null)
+    const bz = nums('bz_gsm_nT')
+    const times = rows.map(r => r.datetime).sort()
+    return {
+      n: rows.length,
+      speed: mean(nums('flow_speed_kms')),
+      density: mean(nums('proton_density_ncc')),
+      bzMean: mean(bz),
+      bzMin: bz.length ? Math.min(...bz) : null,
+      kp: mean(nums('kp')),
+      stormPct: Math.round((100 * rows.filter(r => r.storm_flag).length) / rows.length),
+      t0: times[0],
+      t1: times[times.length - 1],
+    }
+  }, [data, selectedPoints])
 
   const [sizeTick, setSizeTick] = useState(0)
   useEffect(() => {
@@ -415,6 +440,16 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
             <span className="text-space-faint text-sm font-mono text-center px-6">
               No data matches the current filters in this range.
             </span>
+          </div>
+        )}
+        {selStats && (
+          <div className="absolute top-24 left-20 pointer-events-none bg-space-panel/95 border border-space-violet/60 rounded-lg px-3 py-2 font-mono text-[10px] text-space-dim leading-relaxed shadow-lg">
+            <div className="text-violet-300 font-semibold mb-0.5">◈ {selStats.n} points selected</div>
+            <div>Speed mean <b className="text-space-text">{selStats.speed != null ? selStats.speed.toFixed(0) : '—'}</b> km/s</div>
+            <div>Density mean <b className="text-space-text">{selStats.density != null ? selStats.density.toFixed(1) : '—'}</b> n/cc</div>
+            <div>Bz mean <b className="text-space-text">{selStats.bzMean != null ? selStats.bzMean.toFixed(1) : '—'}</b> · min <b className="text-space-text">{selStats.bzMin != null ? selStats.bzMin.toFixed(1) : '—'}</b> nT</div>
+            <div>Kp mean <b className="text-space-text">{selStats.kp != null ? selStats.kp.toFixed(1) : '—'}</b> · storm hours <b className="text-space-text">{selStats.stormPct}%</b></div>
+            <div className="text-space-faint">{selStats.t0.slice(0, 16).replace('T', ' ')} → {selStats.t1.slice(0, 16).replace('T', ' ')}</div>
           </div>
         )}
       </div>

@@ -24,18 +24,3 @@ export async function fetchWindow(startDate, endDate) {
 export function fetchDay(dateStr) {
   return fetchWindow(dateStr, dateStr)
 }
-
-// Find the row for a given hour on a given date, falling back to the
-// nearest available hour within ±maxOffset if that exact hour is a data gap.
-export function findHourRow(rows, dateStr, hour, maxOffset = 3) {
-  for (let d = 0; d <= maxOffset; d++) {
-    const hours = d === 0 ? [hour] : [hour - d, hour + d]
-    for (const h of hours) {
-      if (h < 0 || h > 23) continue
-      const key = `${dateStr}T${String(h).padStart(2, '0')}:00:00`
-      const row = rows.find(r => r.datetime === key)
-      if (row) return { row, hour: h, fallback: h !== hour }
-    }
-  }
-  return null
-}

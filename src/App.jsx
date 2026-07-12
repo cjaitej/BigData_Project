@@ -8,9 +8,9 @@ import {
 } from "date-fns";
 import V1 from './components/V1'
 import V2 from './components/V2'
-import V3 from './components/V3'
 import V5 from './components/V5'
-import StormAnalysis from './components/StormAnalysis'
+import SeasonalPattern from './components/SeasonalPattern'
+import ThreatEscalation from './components/ThreatEscalation'
 import Sidebar from './components/Sidebar'
 import MenuBar from './components/MenuBar'
 import { DEFAULT_FILTERS, applyGlobalFilters, aggregateDaily } from './utils/globalFilters'
@@ -31,8 +31,8 @@ const SECTIONS = [
   { id: 'orbital',     title: 'Orbital Exposure Simulator',  description: 'LEO/Polar/MEO/GEO shells against the live magnetopause.' },
   { id: 'timeseries',  title: 'Time Series',                description: 'Speed, Bz and Dst on one shared time axis, storm periods shaded.' },
   { id: 'phasespace',  title: 'Phase Space',                 description: 'Density vs. speed scatter; lasso to select, color by |B|/Bz/Kp.' },
-  { id: 'spectrogram', title: 'Event Spectrogram',           description: 'Multi-parameter heatmap; click a storm band to inspect.' },
-  { id: 'analysis',    title: 'Storm Analysis',              description: 'Shock-aligned storm comparison plus lagged Bz→Dst correlation.' },
+  { id: 'seasonal',    title: 'Seasonal Pattern',             description: 'Mean Kp/AE by calendar month — the equinox storm-risk effect.' },
+  { id: 'escalation',  title: 'Threat Escalation Flow',        description: 'Sankey: driver type → Bz direction → storm outcome.' },
 ]
 
 export default function App() {
@@ -77,6 +77,7 @@ export default function App() {
     const filtered = applyGlobalFilters(data, filters, stormCatalog)
     return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
   }, [data, filters, stormCatalog])
+
 
   // Hourly↔daily switches change every row's timestamp format, which would
   // orphan a lasso selection (chip stays, ticks vanish) — clear it instead.
@@ -156,14 +157,6 @@ export default function App() {
         )
       }
     }
-  }
-
-  // Clicking a storm band directly on a chart (Event Spectrogram) reads as
-  // an explicit "inspect this" gesture, unlike a passive menu pick — so this
-  // variant also drills through to the Storm Analysis view.
-  const jumpToStormAndView = (storm) => {
-    jumpToStorm(storm)
-    setActiveSection('analysis')
   }
 
   // ◀ STORM / STORM ▶ — step chronologically through the catalog (it's
@@ -306,15 +299,15 @@ const panRight = () => {
   function renderActiveSection() {
     switch (activeSection) {
       case 'timeseries':
-        return <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
+        return <V1 data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog} />
       case 'phasespace':
         return <V2 data={filteredData} loading={loading} selectedPoints={selectedPoints} onSelectPoints={setSelectedPoints} selectedStorm={selectedStorm} playhead={playhead} />
-      case 'spectrogram':
-        return <V3 data={filteredData} loading={loading} selectedPoints={selectedPoints} stormCatalog={stormCatalog} onSelectStorm={jumpToStormAndView} selectedStorm={selectedStorm} playhead={playhead} />
-      case 'analysis':
-        return <StormAnalysis selectedStorm={selectedStorm} stormCatalog={stormCatalog} />
       case 'orbital':
         return <V5 simDate={simDate} simHour={simHour} setSimDate={setSimDate} setSimHour={setSimHour} />
+      case 'seasonal':
+        return <SeasonalPattern start={start} end={end} />
+      case 'escalation':
+        return <ThreatEscalation start={start} end={end} />
       default:
         return null
     }

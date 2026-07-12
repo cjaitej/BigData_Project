@@ -1,17 +1,26 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import * as d3 from 'd3'
+import { useStormDetail } from '../hooks/useStormDetail'
 
-// Small multiples: the three parameters that tell the storm story, stacked
-// on one shared time axis — Speed (the solar wind driver arriving), Bz (the
-// southward turning that lets energy couple in), Dst (the geomagnetic
-// response). That cause → coupling → effect sequence only reads clearly when
-// the lines line up on the same x-axis. The other parameters (Density, Pdyn,
-// Temp) still appear in the hover tooltip and in Phase Space/Spectrogram.
-const ROWS = [
-  { key: 'flow_speed_kms', label: 'Speed', unit: 'km/s', color: '#4ade80' },
-  { key: 'bz_gsm_nT',      label: 'Bz',    unit: 'nT',   color: '#f87171', zeroline: true },
-  { key: 'dst_omni',       label: 'Dst',   unit: 'nT',   color: '#38bdf8', zeroline: true },
+// Small multiples: three stacked mini-charts on one shared time axis, each
+// showing a user-selectable parameter (dropdown per row, in the header).
+// Defaults to Speed (the solar wind driver arriving) / Bz (the southward
+// turning that lets energy couple in) / Dst (the geomagnetic response) since
+// that cause → coupling → effect sequence is the story most worth seeing
+// first — but any of the 9 options below can go in any row. The full
+// parameter set still appears in the hover tooltip regardless of row picks.
+const PARAM_OPTIONS = [
+  { key: 'flow_speed_kms',     label: 'Speed',   unit: 'km/s', color: '#4ade80' },
+  { key: 'proton_density_ncc', label: 'Density', unit: 'n/cc', color: '#22d3ee' },
+  { key: 'bz_gsm_nT',          label: 'Bz',      unit: 'nT',   color: '#f87171', zeroline: true },
+  { key: 'pdyn_computed_nPa',  label: 'Pdyn',    unit: 'nPa',  color: '#fbbf24' },
+  { key: 'dst_omni',           label: 'Dst',     unit: 'nT',   color: '#38bdf8', zeroline: true },
+  { key: 'kp',                 label: 'Kp',      unit: '',     color: '#a3e635', curve: d3.curveStepAfter },
+  { key: 'ae_index_nT',        label: 'AE',      unit: 'nT',   color: '#e879f9' },
+  { key: 'proton_temp_K',      label: 'Temp',    unit: 'K',    color: '#94a3b8' },
+  { key: 'imf_mag_scalar_nT',  label: '|B|',     unit: 'nT',   color: '#facc15' },
 ]
+const paramByKey = key => PARAM_OPTIONS.find(p => p.key === key) ?? PARAM_OPTIONS[0]
 
 const MARGIN = { top: 10, right: 20, bottom: 36, left: 60 }
 // Wide gap + per-row backgrounds/borders so each parameter reads as its own
@@ -23,7 +32,7 @@ const ROW_GAP = 30
 // `new Date()` (documented timezone-string-family gotcha for this project).
 const stripZ = s => (s.endsWith('Z') ? s.slice(0, -1) : s)
 
-export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead }) {
+export default function V1({ data, loading, setDraftStart, setDraftEnd, selectedPoints, selectedStorm, playhead, stormCatalog }) {
   const svgRef  = useRef(null)
   const wrapRef = useRef(null)
   // Playback cursor: {xScale, line} written by the main draw, moved by a
@@ -39,6 +48,36 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
   }, [])
 
   const [emptyAll, setEmptyAll] = useState(false)
+
+  // One parameter dropdown per row — defaults preserve the original
+  // Speed/Bz/Dst layout, but each row is independently re-pickable.
+  const [rowKeys, setRowKeys] = useState(['flow_speed_kms', 'bz_gsm_nT', 'dst_omni'])
+  const ROWS = rowKeys.map(paramByKey)
+  function setRowKey(i, key) {
+    setRowKeys(rk => rk.map((k, idx) => (idx === i ? key : k)))
+  }
+
+  // Storm comparison — a local "compare vs" picker (like the one V5 used to
+  // have). The comparison storm's own shock-aligned series (from
+  // useStormDetail) is translated onto THIS chart's absolute time axis,
+  // anchored at the main (selectedStorm)'s own shock instant — so both
+  // storms' shocks line up visually even though Time Series stays on a real
+  // time axis (rather than the shared relative-hour axis a shock-aligned-only
+  // view would use).
+  const [cmpId, setCmpId] = useState('')
+  const compareStorm = useMemo(
+    () => (stormCatalog || []).find(s => String(s.id) === cmpId) || null,
+    [stormCatalog, cmpId],
+  )
+  const sortedCatalog = useMemo(() => {
+    const rank = { severe: 0, intense: 1, moderate: 2 }
+    return [...(stormCatalog || [])].sort((a, b) =>
+      (rank[a.intensity] ?? 3) - (rank[b.intensity] ?? 3) || a.peak_dst_nT - b.peak_dst_nT)
+  }, [stormCatalog])
+  // Only pay for the shock-detection fetch once a comparison is actually
+  // picked — not on every storm jump if the user never opens this dropdown.
+  const { data: mainAlignData } = useStormDetail(cmpId ? selectedStorm : null)
+  const { data: cmpAlignData } = useStormDetail(cmpId ? compareStorm : null)
 
   useEffect(() => {
     if (!data?.length || !svgRef.current || !wrapRef.current) return
@@ -94,6 +133,13 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
     }
     const selSet = new Set(selectedPoints ?? [])
 
+    // Comparison-storm anchor: the main storm's own shock instant (i=0 row
+    // of its shock-aligned window) — every comparison-line point is placed
+    // at `anchor + i hours`, so both storms' shocks land on the same pixel
+    // column even though this chart's x-axis is real absolute time.
+    const mainAnchor = mainAlignData?.series.find(r => r.i === 0)?.t ?? null
+    const [domD0, domD1] = xScale.domain()
+
     let totalNonNull = 0
     const rowRenders = []
 
@@ -142,7 +188,13 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
 
       const vals = parsed.map(d => d[row.key]).filter(v => v != null)
       totalNonNull += vals.length
-      const [yMin, yMax] = vals.length ? d3.extent(vals) : [0, 1]
+      // Comparison values share this row's y-domain (even where their
+      // projected time falls outside the visible window) — the whole point
+      // of overlaying a second storm is comparing magnitude, so the axis
+      // must accommodate both regardless of x-overlap.
+      const cmpVals = cmpAlignData ? cmpAlignData.series.map(r => r[row.key]).filter(v => v != null) : []
+      const allVals = vals.concat(cmpVals)
+      const [yMin, yMax] = allVals.length ? d3.extent(allVals) : [0, 1]
       const pad = (yMax - yMin) * 0.08 || 1
       const yScale = d3.scaleLinear().domain([yMin - pad, yMax + pad]).range([CH_H, 0])
 
@@ -163,18 +215,34 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
       })
       if (!yTicks.length) yTicks.push(...rawTicks)
 
-      // Grid lines
-      rg.append('g')
-        .call(d3.axisLeft(yScale).tickValues(yTicks).tickSize(-W).tickFormat(''))
-        .call(ax => ax.select('.domain').remove())
-        .call(ax => ax.selectAll('.tick line').attr('stroke', '#1E2330').attr('stroke-width', 1))
+      // (No horizontal background grid lines — removed per user request; the
+      // y-axis ticks and the dashed zero line carry the reference values.)
+
+      // Comparison-storm overlay (dashed, drawn under the main line) — only
+      // when a compare pick exists AND the main storm's shock was found.
+      if (cmpAlignData && mainAnchor) {
+        const projT = d => new Date(mainAnchor.getTime() + d.i * 3600000)
+        const cmpLine = d3.line()
+          .defined(d => d[row.key] != null && projT(d) >= domD0 && projT(d) <= domD1)
+          .x(d => xScale(projT(d)))
+          .y(d => yScale(d[row.key]))
+          .curve(row.curve || d3.curveLinear)
+
+        rg.append('path')
+          .datum(cmpAlignData.series)
+          .attr('fill', 'none')
+          .attr('stroke', '#94a3b8')
+          .attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', '6 4')
+          .attr('d', cmpLine)
+      }
 
       // Line — gaps stay gaps, so instrument saturation reads honestly
       const line = d3.line()
         .defined(d => d[row.key] != null)
         .x(d => xScale(d.t))
         .y(d => yScale(d[row.key]))
-        .curve(d3.curveLinear)
+        .curve(row.curve || d3.curveLinear)
 
       rg.append('path')
         .datum(parsed)
@@ -376,7 +444,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
       d3.select(window).on('mouseup.v1', null)
     }
 
-  }, [data, selectedPoints, selectedStorm, sizeTick, setDraftStart, setDraftEnd])
+  }, [data, selectedPoints, selectedStorm, sizeTick, setDraftStart, setDraftEnd, rowKeys, mainAlignData, cmpAlignData])
 
   // Move the "dashboard now" cursor without re-running the draw effect.
   useEffect(() => {
@@ -401,11 +469,48 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
       {/* Panel header */}
       <div
-        className="flex-none flex items-center gap-2 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60"
+        className="flex-none flex items-center gap-3 px-4 py-2 border-b border-space-hairline bg-space-panel-2/60 flex-wrap"
         title="Drag to set Start/End · violet ticks = points lassoed in Phase Space"
       >
         <span className="text-sm font-semibold text-space-text">Time Series</span>
-        <span className="ml-auto text-[10px] font-mono text-space-faint">Speed · Bz · Dst — hover for all parameters</span>
+
+        <div className="flex items-center gap-2 font-mono text-[10px]">
+          {['Top', 'Mid', 'Bottom'].map((posLabel, i) => (
+            <label key={posLabel} className="flex items-center gap-1 text-space-dim">
+              {posLabel}
+              <select
+                value={rowKeys[i]}
+                onChange={e => setRowKey(i, e.target.value)}
+                className="h-6 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-text text-[10px]"
+              >
+                {PARAM_OPTIONS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+
+        <div className="h-4 w-px bg-space-hairline" />
+
+        <div className="flex items-center gap-1.5 font-mono text-[10px]">
+          <span className="text-space-dim">Compare vs</span>
+          <select
+            value={cmpId}
+            onChange={e => setCmpId(e.target.value)}
+            disabled={!selectedStorm}
+            title={!selectedStorm ? 'Pick a main storm first (⚠ jump control above) to enable comparison' : undefined}
+            className="h-6 max-w-48 bg-space-panel-2 border border-space-hairline rounded px-1.5 text-space-dim text-[10px] disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <option value="">No comparison</option>
+            {sortedCatalog.map(s => (
+              <option key={s.id} value={s.id}>{s.start.slice(0, 10)} · {s.intensity} · Dst {Math.round(s.peak_dst_nT)} nT</option>
+            ))}
+          </select>
+        </div>
+
+        <span className="ml-auto text-[10px] font-mono text-space-faint text-right">
+          {cmpAlignData && compareStorm && <>dashed = {compareStorm.start.slice(0, 10)} (aligned at shock) · </>}
+          hover for all parameters
+        </span>
       </div>
 
       {/* Chart area — no horizontal padding so clientWidth = coordinate space width */}

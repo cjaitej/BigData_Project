@@ -14,7 +14,7 @@ df = df.sort_values('datetime').reset_index(drop=True)
 COLS = [
     'datetime', 'flow_speed_kms', 'proton_density_ncc', 'bz_gsm_nT',
     'pdyn_computed_nPa', 'dst_omni', 'kp', 'storm_flag', 'imf_mag_scalar_nT',
-    'ae_index_nT', 'sym_h_nT', 'proton_temp_K',
+    'ae_index_nT', 'sym_h_nT', 'proton_temp_K', 'sw_type',
     'bz_norm', 'speed_norm', 'density_norm', 'ae_norm', 'pdyn_norm', 'imf_norm',
 ]
 
@@ -44,50 +44,18 @@ def get_storms():
     return jsonify(events)
 
 
-# ---- V5 orbital simulator data -------------------------------------------
-# Daily aggregation + storm catalog computed from omni_processed.csv at
-# startup. Uses Python's round() (correctly-rounded) rather than np/pandas
-# round: SYM-H daily minima land on x.x5 halfway values often enough that the
-# rounding rule is visible in the output.
-
-REGIME_BY_CODE = {-1: 'unknown', 0: 'slow', 1: 'fast', 2: 'cme'}
-
+# ---- Storm catalog (used by V5's quick-jump, Time Series' storm picker,
+# and the MenuBar's storm navigation) --------------------------------------
+# Computed from omni_processed.csv at startup. Uses Python's round()
+# (correctly-rounded) rather than np/pandas round: SYM-H daily minima land on
+# x.x5 halfway values often enough that the rounding rule is visible in the
+# output.
 
 def _round(x, nd):
     return None if pd.isna(x) else round(float(x), nd)
 
 
-def _regime_mode(codes):
-    m = codes.mode()  # ties resolved by smallest code (mode() sorts)
-    return REGIME_BY_CODE.get(int(m.iloc[0]), 'unknown') if len(m) else 'unknown'
-
-
-def build_orbital_data():
-    by_day = df.groupby(df['datetime'].dt.date)
-    agg = pd.DataFrame({
-        'v':     by_day['flow_speed_kms'].mean(),
-        'n':     by_day['proton_density_ncc'].mean(),
-        'B':     by_day['imf_mag_scalar_nT'].mean(),
-        'Bz':    by_day['bz_gsm_nT'].mean(),
-        'Kp':    by_day['kp'].max(),
-        'Dst':   by_day['sym_h_nT'].min(),
-        'Pdyn':  by_day['pdyn_computed_nPa'].mean(),
-        'storm': by_day['storm_flag'].max(),
-    })
-    regimes = by_day['sw_type_code'].agg(_regime_mode)
-    daily = [{
-        't':      f'{day}T00:00:00Z',
-        'v':      _round(row['v'], 1),
-        'n':      _round(row['n'], 2),
-        'B':      _round(row['B'], 1),
-        'Bz':     _round(row['Bz'], 1),
-        'Kp':     None if pd.isna(row['Kp']) else int(round(float(row['Kp']))),
-        'Dst':    _round(row['Dst'], 1),
-        'Pdyn':   _round(row['Pdyn'], 3),
-        'storm':  0 if pd.isna(row['storm']) else int(row['storm']),
-        'regime': regimes[day],
-    } for day, row in agg.iterrows()]
-
+def build_storm_catalog():
     # Storm events: contiguous hourly runs of SYM-H < -50 nT lasting >= 3 h.
     # peak_* fields and sw_type are sampled at the SYM-H minimum hour.
     below = df['sym_h_nT'] < -50
@@ -110,20 +78,94 @@ def build_orbital_data():
             'peak_speed_kms': None if pd.isna(peak['flow_speed_kms']) else float(peak['flow_speed_kms']),
             'sw_type':        None if pd.isna(peak['sw_type']) else peak['sw_type'],
         })
-    return daily, storms
+    return storms
 
 
-ORBITAL_DAILY, ORBITAL_STORMS = build_orbital_data()
-
-
-@app.route('/api/orbital/daily')
-def get_orbital_daily():
-    return jsonify(ORBITAL_DAILY)
+ORBITAL_STORMS = build_storm_catalog()
 
 
 @app.route('/api/orbital/storms')
 def get_orbital_storms():
     return jsonify(ORBITAL_STORMS)
+
+
+# ---- Seasonal (Russell-McPherron) pattern, computed once ------------------
+# Mean Kp/AE/electric-field by calendar month across all 31 years — the
+# semiannual variation (activity peaks near equinoxes) only shows up when
+# averaged over many years, so this is dataset-wide.
+
+def build_seasonal(start=None, end=None):
+    sub_df = df
+    if start is not None:
+        sub_df = sub_df[sub_df['datetime'] >= start]
+    if end is not None:
+        sub_df = sub_df[sub_df['datetime'] <= end]
+    out = []
+    for m in range(1, 13):
+        sub = sub_df[sub_df['datetime'].dt.month == m]
+        out.append({
+            'month': m,
+            'meanKp': _round(sub['kp'].mean(), 2),
+            'meanAE': _round(sub['ae_index_nT'].mean(), 1),
+            'meanElectricField': _round(sub['electric_field_mVm'].mean(), 3),
+            'n': int(len(sub)),
+        })
+    return out
+
+
+SEASONAL = build_seasonal()
+
+
+@app.route('/api/seasonal')
+def get_seasonal():
+    # Same global Date Range filter as /api/data (start/end date strings) —
+    # no params = the full-31-year precomputed default, zero cost.
+    start = request.args.get('start')
+    end = request.args.get('end')
+    if start is None and end is None:
+        return jsonify(SEASONAL)
+    return jsonify(build_seasonal(start, end))
+
+
+# ---- Threat Escalation flow (dataset-wide, computed once) -----------------
+# Every hour classified 3 ways: driver type -> is Bz southward THIS hour? ->
+# is this a storm hour? Counts only — the Sankey diagram is built from these
+# client-side. Note: within a given driver type, the storm rate barely
+# differs between southward and northward hours (e.g. CME ejecta: 48% vs
+# 43%) — a single hour's Bz sign is a weak predictor on its own; sustained
+# southward stretches matter far more (see Storm Analysis's lag correlation).
+# That's a real, honest feature of the data, not a bug in this aggregation.
+
+def build_escalation_flow(start=None, end=None):
+    sub_df = df
+    if start is not None:
+        sub_df = sub_df[sub_df['datetime'] >= start]
+    if end is not None:
+        sub_df = sub_df[sub_df['datetime'] <= end]
+    rows = []
+    g = sub_df.groupby(['sw_type', 'bz_southward', 'storm_flag']).size()
+    for (t, south, storm), count in g.items():
+        rows.append({
+            'sw_type': t,
+            'bz_southward': bool(south),
+            'storm_flag': bool(storm),
+            'count': int(count),
+        })
+    return rows
+
+
+ESCALATION_FLOW = build_escalation_flow()
+
+
+@app.route('/api/escalation_flow')
+def get_escalation_flow():
+    # Same global Date Range filter as /api/data — no params = the
+    # full-dataset precomputed default.
+    start = request.args.get('start')
+    end = request.args.get('end')
+    if start is None and end is None:
+        return jsonify(ESCALATION_FLOW)
+    return jsonify(build_escalation_flow(start, end))
 
 
 @app.route('/api/range')

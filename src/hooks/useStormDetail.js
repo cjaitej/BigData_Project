@@ -55,13 +55,9 @@ async function loadStormDetail(storm) {
   return { storm, series: windowed }
 }
 
-export function stormLabel(s) {
-  return `${s.start.slice(0, 10)} · ${s.intensity} · Dst ${Math.round(s.peak_dst_nT)} nT`
-}
-
 // Fetches + shock-aligns a single storm's detail window, re-running whenever
-// `storm` changes. Shared by StormComparison (main + comparison storm) and
-// StormCorrelation (single storm) so the fetch/cancellation logic exists once.
+// `storm` changes. Used by Time Series for its main storm + "compare vs"
+// storm (two independent calls, one per storm).
 export function useStormDetail(storm) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)

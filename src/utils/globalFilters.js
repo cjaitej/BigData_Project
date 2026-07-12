@@ -44,7 +44,7 @@ const RANGE_FIELDS = [
 // longer have their own range filter (Pdyn/Temp/|B|).
 const PLOTTED_FIELDS = [
   'flow_speed_kms', 'proton_density_ncc', 'bz_gsm_nT', 'kp', 'dst_omni',
-  'pdyn_computed_nPa', 'proton_temp_K', 'imf_mag_scalar_nT',
+  'pdyn_computed_nPa', 'proton_temp_K', 'imf_mag_scalar_nT', 'sw_type',
 ]
 
 // Keeps every row (same length/order/timestamps) so V1's line-chart gaps and
