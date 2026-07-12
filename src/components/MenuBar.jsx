@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const SEVERITY_OPTIONS = [['quiet', 'Quiet'], ['moderate', 'Moderate'], ['intense', 'Intense'], ['severe', 'Severe']]
+// "Quiet" isn't a storm severity — no storm is ever classified quiet (it's
+// what non-storm hours are called) — so it's left out of this list, which
+// is genuinely storm severities only. The underlying quiet-hour filter
+// (filters.severity.quiet) still exists and stays true by default; there's
+// just no UI toggle for it here anymore.
+const SEVERITY_OPTIONS = [['moderate', 'Moderate'], ['intense', 'Intense'], ['severe', 'Severe']]
 const PRESETS = [
   { label: 'Halloween 2003', start: '2003-10-25', end: '2003-11-10' },
   { label: 'St. Patrick 2015', start: '2015-03-14', end: '2015-03-22' },

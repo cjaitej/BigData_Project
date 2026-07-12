@@ -63,6 +63,19 @@ export default function App() {
     return filters.resolution === 'daily' ? aggregateDaily(filtered) : filtered
   }, [data, filters, stormCatalog])
 
+  // The storm catalog, narrowed to whichever severities are checked in the
+  // Geomagnetic filter — every consumer (the MenuBar's jump-to-storm list,
+  // its ◀/▶ stepper, and Time Series' "Compare vs" picker) used to always
+  // see the full catalog regardless of the severity checkboxes, so turning
+  // a severity off didn't actually narrow those lists the way every other
+  // filtered view already does. A storm's own intensity is always
+  // moderate/intense/severe (never "quiet" — that's what non-storm hours
+  // are called), so checking only "Quiet" correctly empties this list.
+  const visibleStormCatalog = useMemo(
+    () => stormCatalog.filter(s => filters.severity[s.intensity] !== false),
+    [stormCatalog, filters.severity],
+  )
+
 
   // Switching resolution changes timestamp format, so drop any lasso selection.
   useEffect(() => { setSelectedPoints([]) }, [filters.resolution])
@@ -127,13 +140,15 @@ export default function App() {
     }
   }
 
-  // Step to the previous/next cataloged storm, chronologically.
+  // Step to the previous/next cataloged storm, chronologically — scoped to
+  // visibleStormCatalog so stepping matches whatever's actually selectable
+  // in the jump-to-storm list.
   const stepStorm = (dir) => {
-    if (!stormCatalog.length) return
+    if (!visibleStormCatalog.length) return
     const anchor = selectedStorm ? selectedStorm.start.slice(0, 10) : start
     const target = dir > 0
-      ? stormCatalog.find(s => s.start.slice(0, 10) > anchor)
-      : [...stormCatalog].reverse().find(s => s.start.slice(0, 10) < anchor)
+      ? visibleStormCatalog.find(s => s.start.slice(0, 10) > anchor)
+      : [...visibleStormCatalog].reverse().find(s => s.start.slice(0, 10) < anchor)
     if (target) jumpToStorm(target)
   }
 
@@ -155,17 +170,20 @@ export default function App() {
   }
 
   // Esc closes a full-screen panel first; only once none is full-screen does
-  // it fall through to clearing the lasso selection / selected storm.
+  // it fall through to clearing the lasso selection. selectedStorm is
+  // deliberately NOT cleared here — it's set via the MenuBar dropdown/
+  // stepper, not a selection made on the page, so it should only reset via
+  // the explicit Reset button (same reasoning as the linked-selections
+  // banner above only showing for the lasso, not the storm pick).
   useEffect(() => {
     function onKey(e) {
       if (e.key !== 'Escape') return
       if (fullscreenPanel) { setFullscreenPanel(null); return }
       if (selectedPoints.length) setSelectedPoints([])
-      else if (selectedStorm) setSelectedStorm(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreenPanel, selectedPoints.length, selectedStorm])
+  }, [fullscreenPanel, selectedPoints.length])
 
   // True right after a V1 drag-to-select (or a manual edit in the Date
   // Range popover) until the user applies or discards it — drives the
@@ -306,7 +324,7 @@ const panRight = () => {
         <MenuBar
           filters={filters}
           setFilters={setFilters}
-          stormCatalog={stormCatalog}
+          stormCatalog={visibleStormCatalog}
           selectedStorm={selectedStorm}
           onSelectStorm={jumpToStorm}
           playing={playing}
@@ -358,42 +376,25 @@ const panRight = () => {
         </div>
       )}
 
-      {/* Active cross-visual selections */}
-      {(selectedStorm || selectedPoints.length > 0) && (
+      {/* Active cross-visual selections — only for interactions made directly
+          on a chart (currently V2's lasso). Picking a storm from the MenuBar
+          dropdown/stepper still drives selectedStorm and still highlights it
+          elsewhere (V1's shading, V2's ring, V5's date) — it just isn't a
+          "selection on the page," so it doesn't show in this banner. */}
+      {selectedPoints.length > 0 && (
         <div className="flex-none flex items-center justify-center gap-2 px-4 py-1.5 border-b border-space-hairline text-[11px] font-mono">
           <span className="text-space-faint">Linked selections:</span>
-          {selectedStorm && (
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-aurora/60 bg-space-aurora/10 text-space-aurora">
-              ⚡ {selectedStorm.start.slice(0, 10)} · {selectedStorm.intensity} storm
-              <button
-                onClick={() => setSelectedStorm(null)}
-                aria-label="Clear the selected storm"
-                title="Clear the selected storm"
-                className="hover:text-space-text leading-none"
-              >
-                ✕
-              </button>
-            </span>
-          )}
-          {selectedPoints.length > 0 && (
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-violet/60 bg-space-violet/10 text-violet-300">
-              ◈ {selectedPoints.length} pts lassoed in Phase Space
-              <button
-                onClick={() => setSelectedPoints([])}
-                aria-label="Clear the lassoed points"
-                title="Clear the lassoed points"
-                className="hover:text-space-text leading-none"
-              >
-                ✕
-              </button>
-            </span>
-          )}
-          <button
-            onClick={() => { setSelectedStorm(null); setSelectedPoints([]) }}
-            className="px-2 py-0.5 rounded border border-space-hairline text-space-dim hover:text-space-text hover:border-space-fast transition-colors"
-          >
-            Clear all
-          </button>
+          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-space-violet/60 bg-space-violet/10 text-violet-300">
+            ◈ {selectedPoints.length} pts lassoed in Phase Space
+            <button
+              onClick={() => setSelectedPoints([])}
+              aria-label="Clear the lassoed points"
+              title="Clear the lassoed points"
+              className="hover:text-space-text leading-none"
+            >
+              ✕
+            </button>
+          </span>
           <span className="text-space-faint hidden lg:inline">(or press Esc)</span>
         </div>
       )}
@@ -428,7 +429,7 @@ const panRight = () => {
         <div className="flex-none h-72 flex gap-3">
           <div className="flex-1 min-w-0">
             <V1
-              data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={stormCatalog}
+              data={filteredData} loading={loading} setDraftStart={setDraftStart} setDraftEnd={setDraftEnd} selectedPoints={selectedPoints} selectedStorm={selectedStorm} playhead={playhead} stormCatalog={visibleStormCatalog}
               isFullscreen={fullscreenPanel === 'v1'}
               onToggleFullscreen={v => setFullscreenPanel(v ? 'v1' : null)}
             />
