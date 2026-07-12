@@ -85,16 +85,11 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
     const selfAnchor = cmpAlignData?.series.find(r => r.i === 0)?.t ?? null
     const mainAnchor = (selectedStorm ? mainAlignData?.series.find(r => r.i === 0)?.t : selfAnchor) ?? null
 
-    // Zoom into the comparison window so the ~84h overlay is actually visible.
-    const focused = !!(cmpAlignData && mainAnchor)
-    // No main storm: draw the comparison storm itself as the solid line.
-    const selfAnchored = focused && !selectedStorm
-    const xDomain = focused
-      ? [new Date(mainAnchor.getTime() - 24 * 3600000), new Date(mainAnchor.getTime() + 96 * 3600000)]
-      : d3.extent(parsed, d => d.t)
-
+    // The main chart's own axis/zoom/data never change based on comparison
+    // state — picking or clearing "Compare vs" only adds/removes the dashed
+    // overlay line, projected onto whatever window is already showing.
     const xScale = d3.scaleTime()
-      .domain(xDomain)
+      .domain(d3.extent(parsed, d => d.t))
       .range([0, W])
 
     // Contiguous storm_flag intervals, for shading
@@ -148,15 +143,12 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
         })
       }
 
-      // Use the storm's own hourly series when focused, so the line stays
-      // detailed even if the main data is daily-aggregated.
-      const solidSource = (focused && selectedStorm && mainAlignData) ? mainAlignData.series
-        : selfAnchored ? cmpAlignData.series
-        : parsed
-      const vals = solidSource.map(d => d[row.key]).filter(v => v != null)
+      // The solid line is always the real loaded data for the current
+      // window — comparison never swaps it out.
+      const vals = parsed.map(d => d[row.key]).filter(v => v != null)
       totalNonNull += vals.length
       // Comparison values share this row's y-domain so magnitudes stay comparable.
-      const cmpVals = (cmpAlignData && !selfAnchored) ? cmpAlignData.series.map(r => r[row.key]).filter(v => v != null) : []
+      const cmpVals = cmpAlignData ? cmpAlignData.series.map(r => r[row.key]).filter(v => v != null) : []
       const allVals = vals.concat(cmpVals)
       const [yMin, yMax] = allVals.length ? d3.extent(allVals) : [0, 1]
       const pad = (yMax - yMin) * 0.08 || 1
@@ -180,7 +172,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
       if (!yTicks.length) yTicks.push(...rawTicks)
 
       // Comparison-storm overlay (dashed, drawn under the main line)
-      if (cmpAlignData && mainAnchor && !selfAnchored) {
+      if (cmpAlignData && mainAnchor) {
         const projT = d => new Date(mainAnchor.getTime() + d.i * 3600000)
         const cmpLine = d3.line()
           .defined(d => d[row.key] != null && projT(d) >= domD0 && projT(d) <= domD1)
@@ -205,7 +197,7 @@ export default function V1({ data, loading, setDraftStart, setDraftEnd, selected
         .curve(row.curve || d3.curveLinear)
 
       rg.append('path')
-        .datum(solidSource)
+        .datum(parsed)
         .attr('fill', 'none')
         .attr('stroke', row.color)
         .attr('stroke-width', 1.5)
