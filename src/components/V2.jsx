@@ -179,10 +179,10 @@ export default function V2({ data, loading, selectedPoints, onSelectPoints, sele
     if (ch.kind === 'div') {
       const ext = d3.extent(parsed, d => d[ch.key])
       const maxAbs = Math.max(Math.abs(ext[0] || 0), Math.abs(ext[1] || 0)) || 15
-      // Negative (southward, reconnection-favorable) -> red/danger end; positive
-      // (northward, calm) -> blue end — must match V3's spectrogram Bz coloring
-      // (`(clipped+15)/30`, so -15 -> t=0 -> red), or the same physical value
-      // reads as opposite colors depending which panel you're looking at.
+      // Negative (southward, reconnection-favorable) -> red/danger end;
+      // positive (northward, calm) -> blue end. This direction is the app's
+      // Bz color convention — keep it if Bz is ever color-encoded elsewhere,
+      // or the same physical value reads as opposite colors across panels.
       colorScale = d3.scaleSequential().domain([-maxAbs, maxAbs]).interpolator(d3.interpolateRdBu)
     } else if (ch.key === 'kp') {
       colorScale = d3.scaleSequential().domain([0, 9]).interpolator(d3.interpolateViridis)

@@ -25,6 +25,10 @@ export default function SeasonalPattern({ start, end }) {
   const [error, setError] = useState(null)
   const [metricKey, setMetricKey] = useState('meanKp')
 
+  // All-months-empty (n=0 everywhere) draws every wedge at zero radius —
+  // an invisible chart that reads as broken rather than as "no data".
+  const allEmpty = seasonal != null && seasonal.every(s => !s.n)
+
   useEffect(() => {
     let cancelled = false
     setSeasonal(null)
@@ -44,7 +48,7 @@ export default function SeasonalPattern({ start, end }) {
   }, [])
 
   useEffect(() => {
-    if (!seasonal || !wrapRef.current) return
+    if (!seasonal || allEmpty || !wrapRef.current || !svgRef.current) return
     const metric = METRICS.find(m => m.key === metricKey)
     const W = wrapRef.current.clientWidth
     const H = wrapRef.current.clientHeight || 500
@@ -129,7 +133,7 @@ export default function SeasonalPattern({ start, end }) {
       .attr('fill', '#7C8496').attr('font-size', 9).attr('font-family', "'JetBrains Mono', monospace")
       .text('by month')
 
-  }, [seasonal, metricKey, sizeTick])
+  }, [seasonal, allEmpty, metricKey, sizeTick])
 
   return (
     <div className="h-full flex flex-col bg-space-panel border border-space-hairline rounded-xl overflow-hidden">
@@ -138,7 +142,7 @@ export default function SeasonalPattern({ start, end }) {
           Seasonal Pattern
         </span>
         <span className="text-[10px] font-mono text-space-faint">
-          <span className="text-space-aurora">green rim</span> = equinox · <span className="text-space-slow">amber rim</span> = solstice
+          <span className="text-space-aurora">green rim</span> = equinox · <span className="text-space-slow">amber rim</span> = solstice · follows Date Range only
         </span>
 
         <div className="ml-auto flex items-center rounded-md border border-space-hairline overflow-hidden font-mono">
@@ -161,7 +165,11 @@ export default function SeasonalPattern({ start, end }) {
           ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">
               {error ? `Could not load seasonal data: ${error}` : 'Loading seasonal averages…'}
             </div>
-          : <svg ref={svgRef} style={{ display: 'block' }} />
+          : allEmpty
+            ? <div className="flex items-center justify-center h-full text-space-faint text-sm font-mono">
+                No hours in this date range — adjust Date Range above.
+              </div>
+            : <svg ref={svgRef} style={{ display: 'block' }} />
         }
       </div>
     </div>

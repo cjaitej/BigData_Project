@@ -23,10 +23,6 @@ const DATASET_END   = parseISO("2025-12-31")
 const MAX_RANGE_DAYS = 365 * 2
 const MIN_RANGE_DAYS = 2
 
-// Storm Comparison and Bz→Dst Correlation were originally separate subpages
-// but are merged back into one ("Storm Analysis") — a shared storm picker
-// drives both the shock-aligned comparison charts and the lag-correlation
-// panel side by side, so nothing about picking a storm is duplicated.
 const SECTIONS = [
   { id: 'orbital',     title: 'Orbital Exposure Simulator',  description: 'LEO/Polar/MEO/GEO shells against the live magnetopause.' },
   { id: 'timeseries',  title: 'Time Series',                description: 'Speed, Bz and Dst on one shared time axis, storm periods shaded.' },
@@ -45,7 +41,7 @@ export default function App() {
   const [draftEnd, setDraftEnd] = useState(DEFAULT_END)
 
   // Full storm catalog (id/peak_time/intensity/...) — fetched once, shared by
-  // V3 (click-to-select), Storm Comparison/Correlation (pickers), V5 (quick-jump).
+  // the MenuBar's jump/step controls and Time Series' comparison picker.
   const [stormCatalog, setStormCatalog] = useState([])
   useEffect(() => {
     fetch('/api/orbital/storms')
@@ -55,22 +51,23 @@ export default function App() {
   }, [])
 
   // Linked-view state shared across panels.
-  // selectedPoints: ISO timestamps lassoed in V2 — shown as tick marks in V1/V3.
+  // selectedPoints: ISO timestamps lassoed in V2 — shown as tick marks in V1.
   const [selectedPoints, setSelectedPoints] = useState([])
-  // selectedStorm: set by clicking a storm band in V3 or picking one in the
-  // Storm menu; simDate/simHour follow it so V5 can jump to the same moment
-  // (one-way — V5 has its own controls too). The comparison storm is NOT
-  // here: it only affects Storm Analysis, so it lives there as local state.
+  // selectedStorm: set from the MenuBar's jump select / ◀▶ step buttons;
+  // simDate/simHour follow it so V5 jumps to the same moment (one-way — V5
+  // has its own controls too). The comparison storm is NOT here: it only
+  // affects Time Series, so it lives there as local state.
   const [selectedStorm, setSelectedStorm] = useState(null)
   const [simDate, setSimDate] = useState(DEFAULT_START)
   const [simHour, setSimHour] = useState(0)
 
   const [activeSection, setActiveSection] = useState('orbital')
 
-  // Global filters — only Time Series/Phase Space/Event Spectrogram respect
-  // these (via `filteredData` below); Storm Analysis/Orbital fetch their own
-  // independent windows and are untouched by design. Orbit-shell visibility
-  // is V5-local state, not a global filter.
+  // Global filters — only Time Series/Phase Space respect the severity/
+  // numeric-range/resolution filters (via `filteredData` below). Seasonal
+  // Pattern and Threat Escalation follow the DATE RANGE only (they aggregate
+  // raw hours server-side), and the Orbital Simulator follows its own
+  // date/hour. Orbit-shell visibility is V5-local state, not a global filter.
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
 
   const filteredData = useMemo(() => {
@@ -85,7 +82,7 @@ export default function App() {
 
   //--------------------------------------------------
   // Playback — sweeps a time cursor (playhead) hour by hour from the loaded
-  // window's start to its end. The cursor is drawn by V1/V2/V3 as a cheap
+  // window's start to its end. The cursor is drawn by V1/V2 as a cheap
   // overlay (no full d3 redraw per tick), and the Orbital Simulator's
   // date/hour follow it, so "play" animates every panel together.
   //--------------------------------------------------
@@ -111,8 +108,8 @@ export default function App() {
   // The dashboard's "current moment" — simDate/simHour is the single source
   // of truth (playback ticks write into it, so during playback this equals
   // data[playIdx].datetime). Always non-null, so the time cursor in
-  // Time Series/Phase Space/Spectrogram is ALWAYS visible whenever the
-  // moment falls inside the loaded window — not only while playing.
+  // Time Series/Phase Space is ALWAYS visible whenever the moment falls
+  // inside the loaded window — not only while playing.
   const playhead = `${simDate}T${String(simHour).padStart(2, '0')}:00:00`
 
   function togglePlay() {
@@ -137,11 +134,11 @@ export default function App() {
     // applyRange already clears the lasso selection.
   }
 
-  // Picking a storm anywhere (V3 click or the Storm menu) drives this one
-  // path. If the storm lies outside the loaded date window, the window is
-  // re-framed to cover it — otherwise Time Series/Phase Space/Spectrogram
-  // have nothing to highlight and the pick looks like it silently did
-  // nothing (the single biggest "selection doesn't reflect" complaint).
+  // Picking a storm (the jump select or ◀▶ steps) drives this one path. If
+  // the storm lies outside the loaded date window, the window is re-framed
+  // to cover it — otherwise Time Series/Phase Space have nothing to
+  // highlight and the pick looks like it silently did nothing (the single
+  // biggest "selection doesn't reflect" complaint).
   const jumpToStorm = (storm) => {
     setSelectedStorm(storm)
     if (storm?.peak_time) {

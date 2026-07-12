@@ -39,19 +39,19 @@ const RANGE_FIELDS = [
   ['dst_omni',           'dst'],
 ]
 
-// Every field any of the three filtered views actually plots — all of these
-// get nulled when a row's severity is unchecked, even the ones that no
-// longer have their own range filter (Pdyn/Temp/|B|).
+// Every field the filtered views (Time Series, Phase Space) actually plot —
+// all of these get nulled when a row's severity is unchecked, even the ones
+// that no longer have their own range filter (Pdyn/Temp/|B|).
 const PLOTTED_FIELDS = [
   'flow_speed_kms', 'proton_density_ncc', 'bz_gsm_nT', 'kp', 'dst_omni',
   'pdyn_computed_nPa', 'proton_temp_K', 'imf_mag_scalar_nT', 'sw_type',
 ]
 
-// Keeps every row (same length/order/timestamps) so V1's line-chart gaps and
-// V3's per-row spectrogram cells stay correct — nulls out only the specific
-// fields that fail their own range, plus every plotted field (not
-// `datetime`) if the row's severity isn't checked. See plan doc for why this
-// is nulled-in-place rather than `data.filter(...)`.
+// Keeps every row (same length/order/timestamps) so V1's line-chart gaps
+// stay honest — nulls out only the specific fields that fail their own
+// range, plus every plotted field (not `datetime`) if the row's severity
+// isn't checked. Nulled-in-place rather than `data.filter(...)`: removing
+// rows would make d3 interpolate a straight line across a real gap.
 export function applyGlobalFilters(data, filters, stormCatalog) {
   if (!data?.length) return data
   return data.map(row => {
@@ -60,7 +60,7 @@ export function applyGlobalFilters(data, filters, stormCatalog) {
     const out = { ...row }
     if (!sevOk) {
       for (const field of PLOTTED_FIELDS) out[field] = null
-      // Also clear storm_flag itself, so V1/V3's storm shading (which reads
+      // Also clear storm_flag itself, so V1's storm shading (which reads
       // storm_flag directly) doesn't keep drawing an intact-looking storm
       // band over data that's just been nulled above.
       out.storm_flag = 0
@@ -94,9 +94,9 @@ function minSkipNull(vals) {
 }
 
 // Groups already-filtered hourly rows into one row per calendar day, skipping
-// nulls per field (mirrors the NaN-skipping mean/max/min already used
-// server-side in build_orbital_data). Emits `T00:00:00` with no `Z`, matching
-// /api/data's own convention, so storm-shading and `new Date()` keep working.
+// nulls per field (NaN-skipping mean/max/min, like pandas does server-side).
+// Emits `T00:00:00` with no `Z`, matching /api/data's own convention, so
+// storm-shading and `new Date()` keep working.
 export function aggregateDaily(rows) {
   if (!rows?.length) return rows
   const byDay = new Map()

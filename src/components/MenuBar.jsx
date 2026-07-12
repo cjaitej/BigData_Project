@@ -14,7 +14,8 @@ const SPEEDS = [1, 2, 5, 10]
 // window across every panel; ◀/▶ step between cataloged storms; the red
 // "jump to storm" select reframes + highlights everywhere. Single-view
 // controls live inside their own view instead (orbit shells → Orbital
-// sidebar, comparison storm → Storm Analysis header).
+// sidebar, row parameters + comparison storm → Time Series header, color
+// channel → Phase Space header, metric → Seasonal Pattern header).
 export default function MenuBar({
   filters, setFilters,
   stormCatalog, selectedStorm, onSelectStorm,
@@ -172,7 +173,7 @@ export default function MenuBar({
           onSelectStorm(s || null)
         }}
         aria-label="Jump to storm — updates all panels"
-        title="Jump to a storm — loads its dates, highlights it in every chart, drives Storm Analysis + the Orbital Simulator"
+        title="Jump to a storm — loads its dates, highlights it in Time Series/Phase Space, and moves the Orbital Simulator to its peak hour"
         className="h-8 max-w-64 rounded-lg bg-space-danger/10 border border-space-danger/60 px-2 text-space-danger text-[10px] tracking-wide"
       >
         <option value="">⚠ JUMP TO STORM → ALL PANELS</option>
@@ -188,6 +189,7 @@ export default function MenuBar({
           <RangeRow label="Speed" unit="km/s" value={filters.speed} onChange={(i, v) => updateRange('speed', i, v)} />
           <RangeRow label="Density" unit="n/cc" value={filters.density} onChange={(i, v) => updateRange('density', i, v)} />
           <RangeRow label="Bz" unit="nT" value={filters.bz} onChange={(i, v) => updateRange('bz', i, v)} />
+          <ScopeHint />
         </div>
       </Menu>
 
@@ -208,18 +210,22 @@ export default function MenuBar({
             <RangeRow label="Kp" value={filters.kp} onChange={(i, v) => updateRange('kp', i, v)} step={0.1} />
             <RangeRow label="Dst" unit="nT" value={filters.dst} onChange={(i, v) => updateRange('dst', i, v)} />
           </div>
+          <ScopeHint />
         </div>
       </Menu>
 
-      <Menu label="Resolution" name="resolution" openMenu={openMenu} onToggle={toggle} width="w-40">
-        <select
-          value={filters.resolution}
-          onChange={e => setFilters(f => ({ ...f, resolution: e.target.value }))}
-          className="w-full h-7 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-dim text-[10px]"
-        >
-          <option value="hourly">Hourly</option>
-          <option value="daily">Daily</option>
-        </select>
+      <Menu label="Resolution" name="resolution" openMenu={openMenu} onToggle={toggle} width="w-44">
+        <div className="flex flex-col gap-2">
+          <select
+            value={filters.resolution}
+            onChange={e => setFilters(f => ({ ...f, resolution: e.target.value }))}
+            className="w-full h-7 bg-space-panel-2 border border-space-hairline rounded px-2 text-space-dim text-[10px]"
+          >
+            <option value="hourly">Hourly</option>
+            <option value="daily">Daily</option>
+          </select>
+          <ScopeHint />
+        </div>
       </Menu>
 
       <Divider />
@@ -236,6 +242,19 @@ export default function MenuBar({
 
 function Divider() {
   return <div className="h-5 w-px bg-space-hairline mx-0.5" />
+}
+
+// Range/severity/resolution filters null values out of the raw hourly rows,
+// which only Time Series and Phase Space plot — the aggregate views
+// (Seasonal Pattern, Threat Escalation) follow the Date Range only, and the
+// Orbital Simulator follows its own date/hour. Saying so here beats letting
+// a user wonder why a slider "did nothing" on those views.
+function ScopeHint() {
+  return (
+    <div className="text-[9px] text-space-faint leading-snug pt-1 border-t border-space-hairline">
+      Applies to Time Series &amp; Phase Space. Seasonal / Escalation follow the Date Range only.
+    </div>
+  )
 }
 
 function Menu({ label, name, openMenu, onToggle, width, children }) {
