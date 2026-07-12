@@ -1,118 +1,91 @@
 # Solar Wind & Space Weather Analytics
+
 CS661 · Big Data Visual Analytics · IIT Kanpur · Group 21
+
+An interactive dashboard for exploring 31 years (1995–2025) of NASA OMNI solar
+wind and geomagnetic data — solar wind speed/density/IMF, geomagnetic indices
+(Kp, Dst/SYM-H, AE), and cataloged geomagnetic storms.
 
 ---
 
-## Setup
+## How to run
 
 **Requirements:** Node.js ≥ 18, Python ≥ 3.10
 
+### 1. Install dependencies
+
 ```bash
 npm install
-cd Server && pip install -r requirements.txt && cd ..
+cd server && pip install -r requirements.txt && cd ..
 ```
 
-**Run (two terminals):**
+### 2. Start the backend and frontend (two terminals)
 
 ```bash
-# Terminal 1
-cd Server && python app.py
+# Terminal 1 — Flask API (port 5000)
+cd server
+python app.py
 
-# Terminal 2
+# Terminal 2 — Vite dev server (port 5173)
 npm run dev
 ```
 
-Open http://localhost:5173
+### 3. Open the app
+
+```
+http://localhost:5173
+```
+
+Vite proxies `/api/*` requests to the Flask server, so both must be running.
 
 ---
 
-## Panels
+## What's in the dashboard
 
-| Panel | Description | Status |
-|---|---|---|
-| V1 | Time-series overview (SW speed, density, IMF Bz, Pdyn) | Done |
-| V2 | Phase space scatter — velocity vs. density | Done |
-| V3 | Event spectrogram — parameter heatmap | Done |
-| V4 | Storm event inspector — 72h detail view | Done |
-| V5 | Orbital exposure simulator — Canvas magnetosphere | Pending |
+All five views are visible at once on a single page, sharing a top menu bar
+(date range, storm playback/jump controls, and numeric filters).
+
+| View | What it shows |
+|---|---|
+| **Orbital Exposure Simulator** | Earth-centric canvas scene — LEO/Polar/MEO/GEO satellite shells plotted at true scale against the live Shue et al. (1998) magnetopause, with a per-shell radiation exposure score for the selected date/hour. |
+| **Time Series** | Two stacked line charts over the loaded date range, each parameter user-selectable (Speed, Density, Bz, Pdyn, Dst, Kp, AE, Temp, \|B\|), with storm shading, a live time cursor, and a "compare vs" overlay to line up a second storm against the selected one. |
+| **Phase Space** | Density vs. speed scatter plot with marginal histograms; lasso-select points to see summary stats, colored by \|B\|, Bz, or Kp. |
+| **Seasonal Pattern** | Mean geomagnetic activity by calendar month as a radial bar chart — shows the Russell-McPherron semiannual effect (activity peaks near the equinoxes). |
+| **Threat Escalation Flow** | A Sankey diagram tracing solar wind driver type → Bz direction → storm outcome, showing how often each type of solar wind actually turns into a geomagnetic storm. |
+
+Global filters (severity, Speed/Density/Bz/Kp/Dst ranges, hourly/daily
+resolution) apply to Time Series and Phase Space. Seasonal Pattern and Threat
+Escalation Flow follow the Date Range only, since they're server-side
+aggregates over whatever window is loaded.
 
 ---
 
-## Working on a panel
+## Project structure
 
-Each component in `src/components/` receives a `data` prop — an array of hourly records for the selected date range. **Do not fetch data inside your component.**
-
-```jsx
-// src/components/V2.jsx
-import { useRef, useEffect } from 'react'
-import * as d3 from 'd3'
-
-export default function V2({ data }) {
-  const svgRef       = useRef(null)
-  const containerRef = useRef(null)
-
-  useEffect(() => {
-    if (!data?.length || !svgRef.current) return
-
-    const W = containerRef.current.clientWidth
-    const H = 400
-
-    const svg = d3.select(svgRef.current)
-    svg.selectAll('*').remove()
-    svg.attr('width', W).attr('height', H)
-
-    // your D3 code here
-
-  }, [data])
-
-  return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-indigo-400 tracking-wider">V2</span>
-        <span className="text-sm font-semibold text-slate-200">Phase Space Explorer</span>
-      </div>
-      <div ref={containerRef} className="relative w-full py-1">
-        {!data?.length
-          ? <div className="flex items-center justify-center h-48 text-slate-500 text-sm">Waiting for data…</div>
-          : <svg ref={svgRef} style={{ display: 'block' }} />
-        }
-      </div>
-    </div>
-  )
-}
+```
+server/
+  app.py                 Flask API — reads omni_processed.csv, serves all endpoints
+  omni_processed.csv      Preprocessed OMNI dataset
+src/
+  App.jsx                 Top-level layout, shared state, global filters
+  components/              One file per view (V1/V2/V5, SeasonalPattern, ThreatEscalation, MenuBar)
+  hooks/useStormDetail.js  Shared shock-aligned storm-window fetch hook
+  utils/                   Filtering, storm-window fetch, Shue magnetopause model, shared constants
+DataPreprocessing/        Standalone scripts used to build omni_processed.csv from raw data
 ```
 
-### Data record shape
-
-```js
-{
-  datetime:            "2003-10-29T06:00:00",
-  flow_speed_kms:      721.4,   // km/s
-  proton_density_ncc:  6.2,     // n/cc
-  bz_gsm_nT:          -32.1,   // nT  — negative = southward = storm driver
-  pdyn_computed_nPa:   7.8,     // nPa
-  dst_omni:           -353.0,   // nT  — storm if < -50
-  kp:                  9.0,     // 0–9
-  storm_flag:          1,       // 1 during storm periods
-  imf_mag_scalar_nT:   46.2,
-  ae_index_nT:         2187.0,
-  sym_h_nT:           -355.0,
-}
-```
-
-### Useful API endpoints (called via `/api/...`)
+## API endpoints
 
 | Endpoint | Description |
 |---|---|
 | `GET /api/data?start=YYYY-MM-DD&end=YYYY-MM-DD` | Hourly records for a date range |
-| `GET /api/storms` | All detected storm events with `min_dst`, `max_kp` |
-| `GET /api/range` | Full available date range in the dataset |
+| `GET /api/orbital/storms` | Cataloged storm events (contiguous SYM-H < -50 nT runs ≥ 3h) |
+| `GET /api/seasonal?start=&end=` | Mean Kp/AE/electric-field by calendar month |
+| `GET /api/escalation_flow?start=&end=` | Hour counts by driver type / Bz direction / storm outcome |
+| `GET /api/storms`, `GET /api/range` | Legacy/utility endpoints |
 
----
+## Tech stack
 
-## Notes
-
-- D3 is already installed — `import * as d3 from 'd3'`
-- Tailwind CSS is set up — use utility classes directly in JSX
-- Keep the panel header markup consistent (copy from the template above)
-- Do not add horizontal padding to the chart wrapper div — it breaks D3 width calculations
+- **Frontend:** React 19, D3.js v7, Tailwind CSS v4, Vite
+- **Backend:** Flask, pandas
+- **Data:** NASA OMNI hourly solar wind / geomagnetic data, 1995–2025
